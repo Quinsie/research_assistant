@@ -105,12 +105,13 @@ const EXCLUDE_START = "# assistant-managed:start";
 const EXCLUDE_END = "# assistant-managed:end";
 
 export async function installGitExclude(root, patterns) {
-  const topLevel = await runGit(root, ["rev-parse", "--show-toplevel"]);
+  const repositoryPrefix = await runGit(root, ["rev-parse", "--show-prefix"]);
   const rawPath = await runGit(root, ["rev-parse", "--git-path", "info/exclude"]);
-  if (!rawPath || !topLevel) return null;
+  if (!rawPath || repositoryPrefix === null) return null;
   const excludePath = path.resolve(root, rawPath);
-  const targetPrefix = path.relative(path.resolve(topLevel), root)
-    .replaceAll(path.sep, "/");
+  const targetPrefix = repositoryPrefix
+    .replaceAll("\\", "/")
+    .replace(/\/+$/u, "");
   const scopedPatterns = patterns.map((pattern) => {
     const suffix = pattern.startsWith("/") ? pattern.slice(1) : pattern;
     return `/${targetPrefix ? `${targetPrefix}/` : ""}${suffix}`;

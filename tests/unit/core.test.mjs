@@ -3084,6 +3084,37 @@ test("ownership-aware purge removes only assistant integration and preserves pro
   }
 });
 
+test("Git exclusion uses repository-relative prefix for a nested target", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-git-prefix-"));
+  const target = path.join(tempRoot, "nested project");
+  try {
+    const initializedGit = spawnSync("git", ["init"], {
+      cwd: tempRoot,
+      encoding: "utf8",
+      windowsHide: true
+    });
+    assert.equal(initializedGit.status, 0, initializedGit.stderr);
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "README.md"), "project\n", "utf8");
+    await initializeProject(target);
+    const exclude = await readFile(
+      path.join(tempRoot, ".git", "info", "exclude"),
+      "utf8"
+    );
+    assert.match(exclude, /\/nested project\/\.assistant\//);
+    const status = spawnSync(
+      "git",
+      ["status", "--short", "--untracked-files=all"],
+      { cwd: tempRoot, encoding: "utf8", windowsHide: true }
+    );
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /README\.md/);
+    assert.doesNotMatch(status.stdout, /\.assistant|AGENTS\.md|\.codex|\.agents/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("purge refuses a changed assistant-owned shared asset before mutation", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-purge-conflict-"));
   const target = path.join(tempRoot, "project");
