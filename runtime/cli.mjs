@@ -11,6 +11,12 @@ import { prepareBootstrapRetry } from "./lib/bootstrap-retry.mjs";
 import { pathExists, readUtf8 } from "./lib/files.mjs";
 import { initializeProject } from "./lib/installer.mjs";
 import { finalizeInstalledProject } from "./lib/initialization.mjs";
+import {
+  exportAssistant,
+  purgeAssistant,
+  uninstallAssistant
+} from "./lib/lifecycle.mjs";
+import { updateAssistant } from "./lib/updater.mjs";
 import { loadCanonicalNodes, validateProject } from "./lib/validator.mjs";
 import { resolvePolicy } from "./lib/policy.mjs";
 import { preflightInitialization } from "./lib/preflight.mjs";
@@ -71,8 +77,141 @@ function requireOption(options, name) {
   return value;
 }
 
+let jsonOutput = false;
+let activeCommand = null;
+let activeTarget = null;
+
+function shellTarget(target) {
+  return /\s/u.test(target) ? `"${target}"` : target;
+}
+
+function humanResult(value) {
+  if (value.schema === "assistant.lifecycle-preview/v1") {
+    const label = value.operation === "purge" ? "Purge" : "Uninstall";
+    const lines = [
+      `${label} ${value.status} for ${value.target}.`,
+      `Remove: ${value.remove.join(", ") || "nothing"}.`,
+      `Preserve: ${value.preserve.join(", ")}.`
+    ];
+    if (value.conflicts.length) lines.push(`Conflicts: ${value.conflicts.join("; ")}.`);
+    if (value.status === "preview" && value.conflicts.length === 0) {
+      lines.push(
+        `No changes made. Run: assistant ${value.operation} --target ${shellTarget(value.target)} --confirm`
+      );
+    }
+    return lines.join("\n");
+  }
+  if (value.schema === "assistant.export-result/v1") {
+    return `Assistant state exported to ${value.output} (${value.files} files).`;
+  }
+  if (value.schema === "assistant.model-confirmation/v1") {
+    return [
+      "Initialization has not changed the project.",
+      value.notice,
+      `Evidence packet: about ${value.packet_bytes ?? "unknown"} bytes; token cost cannot be predicted reliably.`,
+      `Continue with: ${value.resume_command}`
+    ].join("\n");
+  }
+  if (value.schema === "assistant.init-result/v1") {
+    const completion = value.completion ?? {};
+    const semantic = value.semantic ?? {};
+    const status = completion.initialization_status ?? value.initialization_status;
+    const lines = [
+      `Initialization status: ${status}.`,
+      `Mode: ${value.mode ?? "unknown"}.`
+    ];
+    if (semantic.schema) {
+      lines.push(
+        `Semantic result: ${semantic.candidate_nodes ?? 0} canonical candidates, ` +
+        `${semantic.gaps ?? 0} gaps, ${semantic.conflicts ?? 0} conflicts, ` +
+        `${semantic.tokens_used ?? "unknown"} tokens.`
+      );
+    }
+    if (completion.readiness) lines.push(`Readiness: ${completion.readiness}.`);
+    if (completion.readiness === "system_migration_required") {
+      const installed = process.platform === "win32"
+        ? `${shellTarget(path.join(value.target, ".assistant", "system", "assistant.cmd"))} migration --target ${shellTarget(value.target)}`
+        : `${shellTarget(path.join(value.target, ".assistant", "system", "assistant"))} migration --target ${shellTarget(value.target)}`;
+      lines.push(`Next: inspect staged migrations with ${installed}`);
+    } else if (completion.next) {
+      lines.push(`Next: ${completion.next}`);
+    }
+    return lines.join("\n");
+  }
+  if (value.schema === "assistant.validation/v1") {
+    return value.valid
+      ? `Validation passed (${value.summary?.nodes ?? 0} nodes).`
+      : `Validation failed: ${value.summary?.errors ?? value.findings?.length ?? "unknown"} errors.`;
+  }
+  const lines = [
+    `${value.schema ?? "assistant result"}: ${
+      value.status ?? (value.valid === true ? "passed" : "completed")
+    }.`
+  ];
+  if (Array.isArray(value.required)) {
+    lines.push(`Required routes: ${value.required.length}.`);
+  }
+  if (Array.isArray(value.findings)) {
+    lines.push(`Findings: ${value.findings.length}.`);
+  }
+  if (Array.isArray(value.conflicts)) {
+    lines.push(`Conflicts: ${value.conflicts.length}.`);
+  }
+  if (typeof value.next === "string") lines.push(`Next: ${value.next}`);
+  lines.push("Use --json for the complete machine payload.");
+  return lines.join("\n");
+}
+
 function printJson(value) {
-  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+  process.stdout.write(
+    jsonOutput ? `${JSON.stringify(value, null, 2)}\n` : `${humanResult(value)}\n`
+  );
+}
+
+function progressReporter() {
+  const started = Date.now();
+  const remaining = {
+    preflight: "install, evidence packet, semantic analysis, validation/finalization",
+    install: "evidence packet, semantic analysis, validation/finalization",
+    evidence_packet: "semantic analysis, validation/finalization",
+    model_analysis: "validation/finalization (contract repair only if needed)",
+    model_repair: "validation/finalization",
+    semantic_complete: "validation/finalization",
+    validation: "none"
+  };
+  return ({ phase, message, elapsed_seconds: elapsed, remaining: explicit }) => {
+    const seconds = elapsed ?? Math.round((Date.now() - started) / 1000);
+    const next = explicit ?? remaining[phase];
+    const suffix = next ? `; remaining: ${next}` : "";
+    process.stderr.write(`[assistant] ${phase} (${seconds}s): ${message}${suffix}\n`);
+  };
+}
+
+function modelConfirmation(target, options, preflight = null) {
+  const profile = typeof options.profile === "string" ? options.profile : null;
+  const model = profile ? null : (options.model ?? "gpt-5.6-sol");
+  const effort = profile ? null : (options.effort ?? "high");
+  const selection = profile
+    ? `Codex profile '${profile}'`
+    : `model '${model}' with '${effort}' reasoning effort`;
+  const forwarded = process.argv.slice(2).filter((item) => item !== "--yes");
+  return {
+    schema: "assistant.model-confirmation/v1",
+    status: "confirmation_required",
+    target,
+    profile,
+    model,
+    effort,
+    packet_bytes:
+      preflight?.project?.projected_packet?.packet_bytes ?? null,
+    notice:
+      `For initialization quality, the assistant will use ${selection}. ` +
+      "Existing-project semantic analysis may consume substantial tokens. " +
+      "--yes confirms this cost notice only; it does not relax the read-only sandbox.",
+    resume_command: `assistant ${forwarded.map((item) =>
+      /\s/u.test(item) ? `"${item}"` : item
+    ).join(" ")} --yes`
+  };
 }
 
 async function bootstrapState(target) {
@@ -97,7 +236,7 @@ function awaitingCompletion(initialized, semantic, preflight = null) {
       initialization_status: "awaiting_user_input",
       readiness: "bootstrap_decision_required",
       next:
-        "open Codex in the project root; initialization questions take precedence over normal work"
+        "open Codex in the project root; resolve initialization before relying on assistant canonical context"
     }
   };
 }
@@ -136,12 +275,19 @@ async function completeSemanticRun(target, initialized, semantic, preflight = nu
 
 async function main() {
   const { command, options } = parseArguments(process.argv.slice(2));
-  if (!command || command === "help" || options.help) {
+  activeCommand = command;
+  jsonOutput = options.json === true;
+  if (!command || command === "help" || command === "--help" || options.help) {
     process.stdout.write(
       "Usage:\n" +
       "  assistant init --target <path>\n" +
       "    [--profile <name> | -p <name> | --model <id> --effort <level>]\n" +
       "    [--source <path>] [--yes | --allow-large-project]\n" +
+      "    [--json]\n" +
+      "  assistant uninstall --target <path> [--confirm] [--json]\n" +
+      "  assistant export --target <path> --output <path> [--json]\n" +
+      "  assistant purge --target <path> [--confirm] [--json]\n" +
+      "  assistant update --target <path> [--json]\n" +
       "  assistant bootstrap --target <path>\n" +
       "  assistant bootstrap-recover --target <path> --rejected <id>\n" +
       "  assistant activate --target <path>\n" +
@@ -160,6 +306,8 @@ async function main() {
   }
 
   const target = path.resolve(requireOption(options, "target"));
+  activeTarget = target;
+  const progress = progressReporter();
   if (command === "init") {
     if (
       options.profile &&
@@ -214,14 +362,28 @@ async function main() {
         printJson({ ...resumed, completion });
         return;
       }
+      if (options.yes !== true) {
+        printJson(modelConfirmation(target, options));
+        process.exitCode = 3;
+        return;
+      }
       const semantic = await runSemanticBootstrap(target, {
         profile: options.profile,
         model: options.model,
-        effort: options.effort
+        effort: options.effort,
+        onProgress: progress
       });
+      progress({ phase: "validation", message: "Validating and finalizing assistant state" });
       printJson(await completeSemanticRun(target, resumed, semantic));
       return;
     }
+    progress({
+      phase: "preflight",
+      message: "Inspecting project without modification",
+      remaining: options["deterministic-only"] === true
+        ? "install, validation/finalization"
+        : "cost confirmation, install, evidence packet, semantic analysis, validation/finalization"
+    });
     const preflight = await preflightInitialization(target, {
       sources: options.source ?? []
     });
@@ -251,6 +413,23 @@ async function main() {
       process.exitCode = 3;
       return;
     }
+    const existingProject = preflight.project?.paths > 0;
+    if (
+      existingProject &&
+      options["deterministic-only"] !== true &&
+      options.yes !== true
+    ) {
+      printJson(modelConfirmation(target, options, preflight));
+      process.exitCode = 3;
+      return;
+    }
+    progress({
+      phase: "install",
+      message: "Installing local assistant bootstrap assets",
+      remaining: existingProject && options["deterministic-only"] !== true
+        ? "evidence packet, semantic analysis, validation/finalization"
+        : "validation/finalization"
+    });
     const initialized = await initializeProject(target, {
       sources: options.source ?? []
     });
@@ -259,6 +438,7 @@ async function main() {
       return;
     }
     if (initialized.mode === "blank") {
+      progress({ phase: "validation", message: "Validating and finalizing blank assistant state" });
       const completion = await finalizeInstalledProject(target, {
         initializationStatus: initialized.initialization_status
       });
@@ -268,8 +448,10 @@ async function main() {
     const semantic = await runSemanticBootstrap(target, {
       profile: options.profile,
       model: options.model,
-      effort: options.effort
+      effort: options.effort,
+      onProgress: progress
     });
+    progress({ phase: "validation", message: "Validating and finalizing assistant state" });
     if (semantic.status === "awaiting_user_input") {
       printJson(await completeSemanticRun(target, initialized, semantic, preflight));
       return;
@@ -292,11 +474,18 @@ async function main() {
           : "explicit semantic bootstrap retry"
       );
     }
+    if (options.yes !== true) {
+      printJson(modelConfirmation(target, options));
+      process.exitCode = 3;
+      return;
+    }
     const semantic = await runSemanticBootstrap(target, {
       profile: options.profile,
       model: options.model,
-      effort: options.effort
+      effort: options.effort,
+      onProgress: progress
     });
+    progress({ phase: "validation", message: "Validating and finalizing assistant state" });
     printJson(
       await completeSemanticRun(
         target,
@@ -328,6 +517,28 @@ async function main() {
         semantic
       )
     );
+    return;
+  }
+  if (command === "uninstall") {
+    printJson(await uninstallAssistant(target, {
+      confirmed: options.confirm === true
+    }));
+    return;
+  }
+  if (command === "export") {
+    printJson(
+      await exportAssistant(target, path.resolve(requireOption(options, "output")))
+    );
+    return;
+  }
+  if (command === "purge") {
+    printJson(await purgeAssistant(target, {
+      confirmed: options.confirm === true
+    }));
+    return;
+  }
+  if (command === "update") {
+    printJson(await updateAssistant(target, { force: options.force === true }));
     return;
   }
   if (command === "activate") {
@@ -440,5 +651,13 @@ async function main() {
 
 main().catch((error) => {
   process.stderr.write(`assistant: ${error.message}\n`);
+  if (
+    activeTarget &&
+    ["init", "bootstrap", "bootstrap-recover"].includes(activeCommand)
+  ) {
+    process.stderr.write(
+      `Resume: assistant init --target ${shellTarget(activeTarget)} --yes\n`
+    );
+  }
   process.exitCode = 1;
 });

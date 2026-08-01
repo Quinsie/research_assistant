@@ -91,9 +91,11 @@ or comparison alone must not update canonical state.
 
 ## Existing-project bootstrap resolution
 
-When `CURRENT.md` names `BOOTSTRAP-EXISTING` and `awaiting_user_input`, normal
-project work is blocked. Read only the listed gap/conflict records and staged
-candidates. Ask at most three related questions at a time.
+When `CURRENT.md` names `BOOTSTRAP-EXISTING` and `awaiting_user_input`,
+assistant-managed canonical integration is paused. The project and its human
+collaborators are not blocked. Before relying on assistant canonical context,
+read only the listed gap/conflict records and staged candidates. Ask at most
+three related questions at a time.
 
 If migration status lists `agents_control_plane`, resolve it before semantic
 gap/conflict questions. Read the preserved original AGENTS backup and the

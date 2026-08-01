@@ -271,3 +271,40 @@ export async function inspectWindowsRestrictedAcls(target) {
     findings
   };
 }
+
+export async function rollbackWindowsRestrictedAcls(target) {
+  const root = path.resolve(target);
+  if (process.platform !== "win32") {
+    return { status: "not_applicable", removed: [] };
+  }
+  const ledgerPath = path.join(
+    root,
+    ".assistant",
+    "internal",
+    "restricted",
+    "windows-acl.json"
+  );
+  if (!(await pathExists(ledgerPath))) {
+    return { status: "not_present", removed: [] };
+  }
+  const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
+  const sid = ledger.sandbox_group_sid;
+  if (!/^S-\d+(?:-\d+)+$/u.test(sid ?? "")) {
+    throw new Error("cannot roll back invalid Windows ACL ledger");
+  }
+  const removed = [];
+  for (const boundary of ledger.boundaries ?? []) {
+    if (boundary.acl_origin !== "assistant") continue;
+    const absolute = path.resolve(root, ...boundary.relative.split("/"));
+    if (!inside(root, absolute) || !(await pathExists(absolute))) continue;
+    const result = await run("icacls.exe", [absolute, "/remove:d", `*${sid}`], root);
+    if (result.code !== 0) {
+      throw new Error(
+        `failed to remove assistant ACL for ${boundary.relative}: `
+        + (result.stderr || result.stdout).trim()
+      );
+    }
+    removed.push(boundary.relative);
+  }
+  return { status: "rolled_back", sandbox_group_sid: sid, removed };
+}

@@ -75,13 +75,14 @@ export async function markPendingMigrationRequired(target, migrations) {
 - Active work: existing-project system migration
 - Current authorization: inspect and resolve only the staged migrations
 - Pending migration kinds: ${kinds.map((kind) => `\`${kind}\``).join(", ")}
-- Blocked work: canonical activation and normal project work
+- Paused assistant operation: canonical activation that depends on this migration
 - Next safe route: run the migration status command, review each staged/active difference, and obtain explicit confirmation
 - Last verified: \`${timestamp}\`
 
 Semantic survey output is staged, but competing system control assets must be
 resolved before activation. Preserve user-owned rules and files until the
-confirmed migration records their intended owner.
+confirmed migration records their intended owner. This does not block human or
+non-assistant project work.
 `
     )
   );

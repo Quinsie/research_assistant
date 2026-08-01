@@ -9,6 +9,7 @@ import {
   zoneForPath
 } from "./restricted-common.mjs";
 import { inspectValidatedHashes } from "../lib/integrity.mjs";
+import { checkAvailableUpdate } from "../lib/version-check.mjs";
 
 function debug(message) {
   const destination = process.env.ASSISTANT_HOOK_DEBUG_PATH;
@@ -145,6 +146,7 @@ async function main() {
   const projectRoot = normalizeProjectRoot(input.cwd || process.cwd());
   const deferred = await captureDeferredRequest(projectRoot, input);
   const locale = await localeSetup(projectRoot);
+  const update = await checkAvailableUpdate(projectRoot).catch(() => null);
   let integrity;
   try {
     integrity = await inspectValidatedHashes(projectRoot);
@@ -202,6 +204,7 @@ async function main() {
     deferred === null &&
     locale === null &&
     integrity === null
+    && update === null
   ) return;
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -212,9 +215,16 @@ async function main() {
           "Use only assistant_restricted MCP tools for these exact boundaries. " +
           "A grant permits access, not canonical integration or authority. " +
           (deferred
-            ? "Existing-project bootstrap takes precedence. Resolve its listed blockers, then claim and resume the captured deferred request."
+            ? "Assistant canonical bootstrap is incomplete. Explain that this pauses only assistant-managed canonical reliance, not the project or its people. Resolve the listed blockers, then claim and resume the captured request. If the user explicitly chooses to work without assistant context, do not present assistant lifecycle state as project authority."
             : "") +
           (locale ? ` ${locale.instruction}` : ""),
+        update,
+        ...(update
+          ? {
+              update_instruction:
+                `Mention once, briefly: Assistant ${update.available_version} is available. Updating is optional and never automatic; download that release and run its assistant update --target command.`
+            }
+          : {}),
         grants,
         rejected,
         deferred_request: deferred

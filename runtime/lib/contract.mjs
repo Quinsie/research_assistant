@@ -118,6 +118,7 @@ export const SIDE_EFFECTS = new Set([
   "git_push",
   "network_public",
   "network_private",
+  "update_check",
   "external_action",
   "destructive_action"
 ]);

@@ -100,8 +100,9 @@ export async function prepareBootstrapRetry(target, reason) {
 - Last verified: \`${current.metadata.verified_at}\`
 
 The previous candidate survey is preserved as an immutable bootstrap attempt.
-Normal project work remains blocked until the revised survey is validated and
-activated.
+Assistant-managed canonical execution remains paused until the revised survey
+is validated and activated. Human and non-assistant project work remain
+unrestricted.
 `
       ),
       "utf8"
