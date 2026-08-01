@@ -102,8 +102,10 @@ gap/conflict questions. Read the preserved original AGENTS backup and the
 active AGENTS file. Keep repository-native build, test, safety, and subtree
 rules in AGENTS. Move durable assistant side-effect preferences such as
 commit/report/network behavior into `.assistant/POLICY.md` when the user wants
-them retained. Remove or rewrite legacy INDEX/CURRENT/PLAN/POLICY routes that
-compete with `.assistant`; do not delete rules merely because they are old.
+them retained. Remove or rewrite any legacy route that semantically claims
+active current, plan, decision, authorization, policy, or routing ownership
+and competes with `.assistant`; never assume fixed filenames or directories,
+and do not delete rules merely because they are old.
 Preview material rule changes and obtain explicit confirmation, then run:
 
 `.assistant\system\assistant.cmd migration --complete-agents --confirm --json`
@@ -119,13 +121,32 @@ the persisted profile or model/effort selection and a preserved Codex session
 when one exists. Never downgrade effort, add a timeout, or start a replacement
 semantic attempt without the user's explicit restart instruction and reason.
 
+The runner processes every knowledge-bearing text candidate as stable semantic
+units in resumable batches, then synthesizes from the validated unit ledger.
+Do not bypass an incomplete batch, unit coverage, lineage, or closed-book
+finding by opening one legacy master document and treating it as live fallback
+authority. Historical and superseded meaning must be integrated into bounded
+canonical history, decision, evidence, or plan owners when it explains the
+project. A valid node count alone is not readiness.
+
+Review every staged `legacy_surfaces` entry by observed meaning. Preserve
+repository-native build/test instructions, user sources, reports, and ordinary
+project documents in their appropriate role. For a competing control surface,
+preview the proposed preserve/rewrite/move/remove action and obtain the user's
+approval before changing it. Do not invent a generic archive directory. If an
+approved action is `integrate_then_move` or `integrate_then_remove`, apply it
+before resolution; activation deterministically refuses a still-present live
+path.
+
 After all answers are explicit, create one temporary
 `assistant.bootstrap-resolution/v1` JSON package. It must contain:
 
 - one decision for every active initialization gap and material conflict;
 - each decision's affected candidate IDs;
 - a complete `resolved_output` that preserves unaffected candidate meaning and
-  inventory coverage;
+  inventory and semantic-unit coverage;
+- complete origin-to-current lineage, control-surface dispositions, and a
+  closed-book audit with no live legacy authority dependency;
 - a `canonical_user_approved` decision candidate for every material conflict.
 
 Preview the package to the user when any material conflict exists. After the

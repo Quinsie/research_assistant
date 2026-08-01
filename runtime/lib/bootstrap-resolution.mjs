@@ -42,7 +42,9 @@ function validateResolutionPackage(
   original,
   inventory,
   confirmed,
-  profile
+  profile,
+  semanticManifest,
+  semanticLedger
 ) {
   const findings = [];
   if (resolution?.schema !== "assistant.bootstrap-resolution/v1") {
@@ -57,7 +59,9 @@ function validateResolutionPackage(
   }
   findings.push(
     ...validateBootstrapOutput(resolution.resolved_output, inventory, {
-      profile
+      profile,
+      semanticManifest,
+      semanticLedger
     })
   );
 
@@ -168,12 +172,28 @@ export async function resolveBootstrap(target, resolution, options = {}) {
   const manifest = JSON.parse(
     await readFile(path.join(root, ".assistant", "manifest.json"), "utf8")
   );
+  const semanticManifestPath = path.join(
+    bootstrapRoot,
+    "semantic-manifest.json"
+  );
+  const semanticManifest = (await pathExists(semanticManifestPath))
+    ? JSON.parse(await readFile(semanticManifestPath, "utf8"))
+    : null;
+  const semanticLedgerPath = path.join(
+    bootstrapRoot,
+    "semantic-ledger.json"
+  );
+  const semanticLedger = (await pathExists(semanticLedgerPath))
+    ? JSON.parse(await readFile(semanticLedgerPath, "utf8"))
+    : null;
   const findings = validateResolutionPackage(
     resolution,
     original,
     inventory,
     options.confirmed === true,
-    manifest.profile ?? "research"
+    manifest.profile ?? "research",
+    semanticManifest,
+    semanticLedger
   );
   if (findings.length > 0) {
     throw new Error(`bootstrap resolution rejected: ${findings.join("; ")}`);

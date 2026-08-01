@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "batch_id", "unit_analyses"],
+  "properties": {
+    "schema": { "const": "assistant.bootstrap-batch-output/v1" },
+    "batch_id": { "type": "string", "pattern": "^BATCH-[0-9]{4}$" },
+    "unit_analyses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "unit_id",
+          "classification",
+          "semantic_roles",
+          "meaning",
+          "durable_facts",
+          "exact_elements",
+          "authority_claims",
+          "temporal_status",
+          "relation_claims",
+          "conflict_candidates",
+          "uncertainties"
+        ],
+        "properties": {
+          "unit_id": { "type": "string", "pattern": "^SEM-[A-F0-9]{20}$" },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "canonical_knowledge_candidate",
+              "repository_instruction",
+              "user_source",
+              "derived_report",
+              "historical_or_superseded",
+              "code_or_config_evidence",
+              "artifact_or_data_evidence",
+              "nonsemantic"
+            ]
+          },
+          "semantic_roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "origin",
+                "scope",
+                "theory",
+                "terminology",
+                "literature",
+                "question",
+                "hypothesis",
+                "plan",
+                "milestone",
+                "experiment",
+                "method",
+                "control",
+                "condition",
+                "result",
+                "evidence",
+                "limitation",
+                "decision",
+                "issue",
+                "risk",
+                "history",
+                "current",
+                "authorization",
+                "environment",
+                "provenance",
+                "instruction",
+                "other"
+              ]
+            }
+          },
+          "meaning": { "type": "string", "minLength": 1 },
+          "durable_facts": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "exact_elements": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "authority_claims": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "temporal_status": {
+            "type": "string",
+            "enum": [
+              "active_claim",
+              "historical_claim",
+              "superseded_claim",
+              "mixed_or_unclear",
+              "not_applicable"
+            ]
+          },
+          "relation_claims": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "conflict_candidates": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "uncertainties": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

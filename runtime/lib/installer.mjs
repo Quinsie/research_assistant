@@ -15,6 +15,10 @@ import { fileURLToPath } from "node:url";
 import { pathExists, writeUtf8 } from "./files.mjs";
 import { fingerprintAsset } from "./lifecycle.mjs";
 import { inventoryProject } from "./inventory.mjs";
+import {
+  competingControlPaths,
+  discoverReferencedControlSurfaces
+} from "./legacy-surfaces.mjs";
 import { refreshValidatedHashes } from "./integrity.mjs";
 import { parseNodeDocument, serializeNodeDocument } from "./meta.mjs";
 import { snapshotBootstrapRestrictedInputs } from "./snapshot.mjs";
@@ -41,6 +45,7 @@ const installedLibraryNames = [
   "integrity.mjs",
   "locale.mjs",
   "lifecycle.mjs",
+  "legacy-surfaces.mjs",
   "meta.mjs",
   "migration.mjs",
   "policy.mjs",
@@ -370,7 +375,7 @@ async function updateManifestForBootstrap(root) {
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
-async function installRootAgents(root) {
+async function installRootAgents(root, inventory) {
   const agentsPath = path.join(root, "AGENTS.md");
   const managedBlock = await readManagedBlock();
   if (!(await pathExists(agentsPath))) {
@@ -384,15 +389,13 @@ async function installRootAgents(root) {
   }
   const backupPath = path.join(root, ".assistant", "internal", "backup", "AGENTS.md");
   await writeUtf8(backupPath, existing);
-  const competingControlPaths = [
-    ...new Set(
-      [...existing.matchAll(
-        /(?:^|[\s`"'(])((?:docs|documentation)[/\\](?:agent|assistant)[/\\](?:INDEX|CURRENT|PLAN|POLICY)\.md)/gimu
-      )].map((match) => match[1].replaceAll("\\", "/"))
-    )
-  ];
+  const referencedSurfaces = discoverReferencedControlSurfaces(
+    existing,
+    inventory.entries.map((entry) => entry.path)
+  );
+  const competingPaths = competingControlPaths(referencedSurfaces);
   let pendingMigration = null;
-  if (competingControlPaths.length > 0) {
+  if (competingPaths.length > 0) {
     pendingMigration = path.join(
       root,
       ".assistant",
@@ -407,7 +410,8 @@ async function installRootAgents(root) {
         kind: "agents_control_plane",
         status: "pending_user_review",
         original_backup: ".assistant/internal/backup/AGENTS.md",
-        competing_control_paths: competingControlPaths,
+        competing_control_paths: competingPaths,
+        discovered_surfaces: referencedSurfaces,
         required_resolution: [
           "keep non-conflicting repository-native build, test, and subtree instructions in AGENTS.md",
           "move durable assistant side-effect policy to .assistant/POLICY.md when it should remain active",
@@ -646,7 +650,7 @@ export async function initializeExistingProject(target, options = {}) {
       }, null, 2)}\n`
     );
 
-    agentsChange = await installRootAgents(root);
+    agentsChange = await installRootAgents(root, inventory);
     if (agentsChange.action === "created") createdPaths.push(path.join(root, "AGENTS.md"));
     configChange = await installProjectConfig(root, replacements);
     if (configChange.action === "created") createdPaths.push(configChange.path);

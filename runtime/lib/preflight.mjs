@@ -1,6 +1,9 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { buildEvidencePacket } from "./evidence-packet.mjs";
+import {
+  buildEvidencePacket,
+  buildSemanticEvidenceBatches
+} from "./evidence-packet.mjs";
 import { pathExists } from "./files.mjs";
 import { inventoryProject } from "./inventory.mjs";
 
@@ -54,6 +57,7 @@ export async function preflightInitialization(target, options = {}) {
       };
   const semantic = semanticMetrics(inventory);
   const packet = await buildEvidencePacket(root, inventory);
+  const semanticEvidence = await buildSemanticEvidenceBatches(root, inventory);
   const sources = [];
   for (const source of options.sources ?? []) {
     sources.push(await inspectSource(source));
@@ -82,6 +86,13 @@ export async function preflightInitialization(target, options = {}) {
       limit: limits.packetBytes
     });
   }
+  if (semanticEvidence.metrics.batch_bytes > limits.packetBytes) {
+    reasons.push({
+      metric: "semantic_batch_bytes",
+      actual: semanticEvidence.metrics.batch_bytes,
+      limit: limits.packetBytes
+    });
+  }
   if (sourceBytes > limits.sourceBytes) {
     blockingReasons.push({
       metric: "explicit_source_bytes",
@@ -104,7 +115,8 @@ export async function preflightInitialization(target, options = {}) {
       ...inventory.summary,
       semantic_candidate_files: semantic.files,
       semantic_candidate_bytes: semantic.bytes,
-      projected_packet: packet.metrics
+      projected_packet: packet.metrics,
+      projected_semantic_evidence: semanticEvidence.metrics
     },
     sources,
     reasons,

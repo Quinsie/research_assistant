@@ -329,6 +329,7 @@ async function reconcileCommittedActivation(root, record) {
   const output = JSON.parse(
     await readFile(path.join(bootstrapRoot, "model-result.json"), "utf8")
   );
+  await assertClosedBookReady(root, output);
   const status = output.gaps.length > 0 ? "ready_with_gaps" : "ready";
   const timestamp = new Date().toISOString();
   const manifestPath = path.join(root, ".assistant", "manifest.json");
@@ -428,7 +429,80 @@ function canonicalEvidencePaths(paths, snapshotMap) {
   );
 }
 
-function canonicalRecord(record, snapshotMap, profile) {
+function evidenceUnitsByTarget(output) {
+  const byTarget = new Map();
+  for (const coverage of output.semantic_coverage ?? []) {
+    for (const target of coverage.target_ids ?? []) {
+      const values = byTarget.get(target) ?? [];
+      values.push(coverage.unit_id);
+      byTarget.set(target, values);
+    }
+  }
+  return byTarget;
+}
+
+async function assertClosedBookReady(root, output) {
+  const audit = output.closed_book_audit;
+  const lineage = output.lineage;
+  const unresolvedSurfaces = [];
+  for (const surface of output.legacy_surfaces ?? []) {
+    if (
+      ["canonical_candidate", "competing_control_surface"].includes(
+        surface.status
+      )
+    ) {
+      unresolvedSurfaces.push(surface.path);
+      continue;
+    }
+    if (
+      surface.status === "repository_native" &&
+      (surface.roles ?? []).some((role) =>
+        ["current", "plan", "decision", "authorization", "router"].includes(role)
+      )
+    ) {
+      unresolvedSurfaces.push(surface.path);
+      continue;
+    }
+    if (surface.status === "resolved") {
+      if (
+        !["integrate_then_move", "integrate_then_remove"].includes(
+          surface.proposed_action
+        )
+      ) {
+        unresolvedSurfaces.push(surface.path);
+        continue;
+      }
+      const absolute = path.resolve(root, surface.path);
+      const relative = path.relative(root, absolute);
+      if (
+        relative.startsWith("..") ||
+        path.isAbsolute(relative) ||
+        await pathExists(absolute)
+      ) {
+        unresolvedSurfaces.push(surface.path);
+      }
+    }
+  }
+  if (
+    !lineage?.complete ||
+    (output.candidate_nodes?.length > 0 &&
+      ((lineage?.origin_ids ?? []).length === 0 ||
+        (lineage?.current_ids ?? []).length === 0)) ||
+    !audit?.origin_to_current_explainable ||
+    !audit?.current_authorization_explainable ||
+    !audit?.hypotheses_explainable ||
+    !audit?.decisions_explainable ||
+    (audit?.live_legacy_dependencies ?? []).length > 0 ||
+    (audit?.missing_concerns ?? []).length > 0 ||
+    unresolvedSurfaces.length > 0
+  ) {
+    throw new Error(
+      "closed-book activation blocked: semantic lineage or legacy migration is incomplete"
+    );
+  }
+}
+
+function canonicalRecord(record, snapshotMap, profile, evidenceUnitMap) {
   return {
     id: record.id,
     type: record.type,
@@ -439,7 +513,9 @@ function canonicalRecord(record, snapshotMap, profile) {
         : "canonical_agent",
     certainty: record.certainty,
     relations: record.relations,
-    evidence_paths: canonicalEvidencePaths(record.evidence_paths, snapshotMap),
+    evidence_units: evidenceUnitMap.get(record.id) ?? [],
+    snapshot_evidence: canonicalEvidencePaths(record.evidence_paths, snapshotMap)
+      .filter((value) => /^SNAP-/u.test(value)),
     legacy_aliases: record.legacy_aliases,
     origin: "bootstrap",
     ...(record.semantic_sections?.length > 0
@@ -461,9 +537,15 @@ function semanticRecordBody(record, snapshotMap) {
     replaceRestrictedReferences(record.body.trim(), snapshotMap);
 }
 
-function collectionDocument(group, timestamp, snapshotMap, profile) {
+function collectionDocument(
+  group,
+  timestamp,
+  snapshotMap,
+  profile,
+  evidenceUnitMap
+) {
   const records = group.records.map((record) =>
-    canonicalRecord(record, snapshotMap, profile)
+    canonicalRecord(record, snapshotMap, profile, evidenceUnitMap)
   );
   const metadata = {
     schema: "assistant.node/v1",
@@ -535,10 +617,16 @@ function standalonePath(record, profile) {
   return `.assistant/knowledge/${directories[record.type]}/${record.id}.md`;
 }
 
-function standaloneDocument(record, timestamp, snapshotMap, profile) {
+function standaloneDocument(
+  record,
+  timestamp,
+  snapshotMap,
+  profile,
+  evidenceUnitMap
+) {
   const metadata = {
     schema: "assistant.node/v1",
-    ...canonicalRecord(record, snapshotMap, profile),
+    ...canonicalRecord(record, snapshotMap, profile, evidenceUnitMap),
     verified_at: timestamp
   };
   return serializeNodeDocument(
@@ -547,13 +635,25 @@ function standaloneDocument(record, timestamp, snapshotMap, profile) {
   );
 }
 
-function splitOversizedGroups(groups, timestamp, snapshotMap, profile) {
+function splitOversizedGroups(
+  groups,
+  timestamp,
+  snapshotMap,
+  profile,
+  evidenceUnitMap
+) {
   const result = [];
   for (const original of groups) {
     const group = { ...original, records: [...original.records] };
     if (
       Buffer.byteLength(
-        collectionDocument(group, timestamp, snapshotMap, profile),
+        collectionDocument(
+          group,
+          timestamp,
+          snapshotMap,
+          profile,
+          evidenceUnitMap
+        ),
         "utf8"
       ) <= BOUNDEDNESS_DEFAULTS.hardBytes
     ) {
@@ -564,7 +664,13 @@ function splitOversizedGroups(groups, timestamp, snapshotMap, profile) {
       .map((record) => ({
         record,
         bytes: Buffer.byteLength(
-          standaloneDocument(record, timestamp, snapshotMap, profile),
+          standaloneDocument(
+            record,
+            timestamp,
+            snapshotMap,
+            profile,
+            evidenceUnitMap
+          ),
           "utf8"
         )
       }))
@@ -577,7 +683,13 @@ function splitOversizedGroups(groups, timestamp, snapshotMap, profile) {
     while (
       group.records.length > 0 &&
       Buffer.byteLength(
-        collectionDocument(group, timestamp, snapshotMap, profile),
+        collectionDocument(
+          group,
+          timestamp,
+          snapshotMap,
+          profile,
+          evidenceUnitMap
+        ),
         "utf8"
       ) > BOUNDEDNESS_DEFAULTS.softBytes
     ) {
@@ -598,7 +710,13 @@ function splitOversizedGroups(groups, timestamp, snapshotMap, profile) {
         standalone: true
       };
       const bytes = Buffer.byteLength(
-        standaloneDocument(record, timestamp, snapshotMap, profile),
+        standaloneDocument(
+          record,
+          timestamp,
+          snapshotMap,
+          profile,
+          evidenceUnitMap
+        ),
         "utf8"
       );
       if (bytes > BOUNDEDNESS_DEFAULTS.hardBytes) {
@@ -647,6 +765,7 @@ export async function activateBootstrap(target) {
       `activation blocked: critical_gaps=${critical.length}, material_conflicts=${material.length}`
     );
   }
+  await assertClosedBookReady(root, output);
 
   const manifestPath = path.join(root, ".assistant", "manifest.json");
   const beforeManifest = await readFile(manifestPath, "utf8");
@@ -667,11 +786,13 @@ export async function activateBootstrap(target) {
     ])
   );
   const timestamp = new Date().toISOString();
+  const evidenceUnitMap = evidenceUnitsByTarget(output);
   const groups = splitOversizedGroups(
     initialGroups,
     timestamp,
     snapshotMap,
-    profile
+    profile,
+    evidenceUnitMap
   );
   const transactionId = `TXN-${randomUUID()}`;
   const transactionRoot = path.join(
@@ -746,9 +867,16 @@ export async function activateBootstrap(target) {
               group.records[0],
               timestamp,
               snapshotMap,
-              profile
+              profile,
+              evidenceUnitMap
             )
-          : collectionDocument(group, timestamp, snapshotMap, profile)
+          : collectionDocument(
+              group,
+              timestamp,
+              snapshotMap,
+              profile,
+              evidenceUnitMap
+            )
       );
       createdPaths.push(destination);
     }
