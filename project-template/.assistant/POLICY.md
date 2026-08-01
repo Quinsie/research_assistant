@@ -63,3 +63,17 @@ Never push without an explicit current user instruction.
 
 Public reference lookup is allowed when task-relevant. Private, paid, sensitive,
 or side-effecting external access requires explicit authorization.
+
+<!-- assistant-policy
+{
+  "id": "POL-UPDATE-CHECK-001",
+  "side_effects": ["update_check"],
+  "value": "enabled",
+  "enabled": true
+}
+-->
+## Update check
+
+At most once per cache interval, allow the local non-model checker to request
+the configured public release metadata. Failure or offline status never blocks
+work. Set the value to `disabled` to turn this check off.

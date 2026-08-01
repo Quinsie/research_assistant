@@ -13,6 +13,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathExists, writeUtf8 } from "./files.mjs";
+import { fingerprintAsset } from "./lifecycle.mjs";
 import { inventoryProject } from "./inventory.mjs";
 import { refreshValidatedHashes } from "./integrity.mjs";
 import { parseNodeDocument, serializeNodeDocument } from "./meta.mjs";
@@ -37,6 +38,7 @@ const installedLibraryNames = [
   "initialization.mjs",
   "integrity.mjs",
   "locale.mjs",
+  "lifecycle.mjs",
   "meta.mjs",
   "migration.mjs",
   "policy.mjs",
@@ -44,6 +46,7 @@ const installedLibraryNames = [
   "router.mjs",
   "structure.mjs",
   "transaction.mjs",
+  "version-check.mjs",
   "validator.mjs",
   "windows-acl.mjs"
 ];
@@ -63,8 +66,8 @@ function renderAdditionalRestrictedToml(boundaries) {
     .join("\n");
 }
 
-function setWindowsHidden(directory) {
-  if (process.platform !== "win32") return Promise.resolve();
+export function setWindowsHidden(directory) {
+  if (process.platform !== "win32") return Promise.resolve(false);
   return new Promise((resolve, reject) => {
     const child = spawn("attrib.exe", ["+H", directory], {
       windowsHide: true,
@@ -77,13 +80,87 @@ function setWindowsHidden(directory) {
     });
     child.once("error", reject);
     child.once("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`failed to hide .assistant: ${stderr.trim()}`));
+      if (code === 0) resolve(true);
+      else reject(new Error(`failed to hide assistant directory: ${stderr.trim()}`));
     });
   });
 }
 
-async function replacePlaceholders(root, replacements) {
+function runGit(root, args) {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, {
+      cwd: root,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.once("error", () => resolve(null));
+    child.once("close", (code) => resolve(code === 0 ? stdout.trim() : null));
+  });
+}
+
+const EXCLUDE_START = "# assistant-managed:start";
+const EXCLUDE_END = "# assistant-managed:end";
+
+export async function installGitExclude(root, patterns) {
+  const topLevel = await runGit(root, ["rev-parse", "--show-toplevel"]);
+  const rawPath = await runGit(root, ["rev-parse", "--git-path", "info/exclude"]);
+  if (!rawPath || !topLevel) return null;
+  const excludePath = path.resolve(root, rawPath);
+  const targetPrefix = path.relative(path.resolve(topLevel), root)
+    .replaceAll(path.sep, "/");
+  const scopedPatterns = patterns.map((pattern) => {
+    const suffix = pattern.startsWith("/") ? pattern.slice(1) : pattern;
+    return `/${targetPrefix ? `${targetPrefix}/` : ""}${suffix}`;
+  });
+  const priorExists = await pathExists(excludePath);
+  const prior = priorExists ? await readFile(excludePath, "utf8") : "";
+  if (prior.includes(EXCLUDE_START) || prior.includes(EXCLUDE_END)) {
+    throw new Error("existing Git local exclude contains assistant managed markers");
+  }
+  const body = [
+    EXCLUDE_START,
+    ...scopedPatterns,
+    EXCLUDE_END
+  ].join("\n");
+  const separator = prior.length === 0 || prior.endsWith("\n") ? "" : "\n";
+  const prefix = prior.length === 0 ? "" : `${separator}\n`;
+  await mkdir(path.dirname(excludePath), { recursive: true });
+  await writeFile(excludePath, `${prior}${prefix}${body}\n`, "utf8");
+  return {
+    path: excludePath,
+    prior_exists: priorExists,
+    patterns: scopedPatterns
+  };
+}
+
+async function removeGitExclude(change) {
+  if (!change || !(await pathExists(change.path))) return;
+  const content = await readFile(change.path, "utf8");
+  const start = content.indexOf(EXCLUDE_START);
+  const end = content.indexOf(EXCLUDE_END);
+  if (start < 0 || end < start) return;
+  const after = end + EXCLUDE_END.length;
+  const next = `${content.slice(0, start)}${content.slice(after)}`
+    .replace(/\r?\n{3,}/gu, "\n\n")
+    .trimEnd();
+  await writeFile(change.path, next ? `${next}\n` : "", "utf8");
+}
+
+async function writeInstallationLedger(root, assets) {
+  await writeUtf8(
+    path.join(root, ".assistant", "internal", "installation.json"),
+    `${JSON.stringify({
+      schema: "assistant.installation/v1",
+      installed_at: new Date().toISOString(),
+      assets
+    }, null, 2)}\n`
+  );
+}
+
+export async function replacePlaceholders(root, replacements) {
   const textExtensions = new Set([".md", ".json", ".toml", ".gitignore"]);
   async function visit(current) {
     const entries = await readdir(current, { withFileTypes: true });
@@ -109,7 +186,7 @@ async function replacePlaceholders(root, replacements) {
   await visit(root);
 }
 
-async function copyInstalledRuntime(destination) {
+export async function copyInstalledRuntime(destination) {
   await cp(projectRuntimeRoot, path.join(destination, "runtime"), {
     recursive: true,
     errorOnExist: true,
@@ -143,7 +220,12 @@ export async function initializeBlankProject(target) {
     });
   }
   await copyInstalledRuntime(path.join(root, ".assistant", "system"));
-  await setWindowsHidden(path.join(root, ".assistant"));
+  const visibility = [];
+  for (const relative of [".assistant", ".agents", ".codex"]) {
+    if (await setWindowsHidden(path.join(root, relative))) {
+      visibility.push({ path: relative, created: true, hidden_by_assistant: true });
+    }
+  }
   const timestamp = new Date().toISOString();
   await replacePlaceholders(root, {
     PROJECT_ID: randomUUID(),
@@ -168,6 +250,36 @@ export async function initializeBlankProject(target) {
     ADDITIONAL_RESTRICTED_TOML: ""
   });
 
+  const manifest = JSON.parse(
+    await readFile(path.join(root, ".assistant", "manifest.json"), "utf8")
+  );
+  const skillPath = `.agents/skills/assistant-${manifest.profile}-workflow`;
+  const gitExclude = await installGitExclude(root, [
+    "/.assistant/",
+    "/.agents/",
+    "/.codex/",
+    "/AGENTS.md"
+  ]);
+  await writeInstallationLedger(root, {
+    agents: { action: "created", path: "AGENTS.md" },
+    codex_config: {
+      action: "created",
+      path: ".codex/config.toml",
+      fingerprint: await fingerprintAsset(path.join(root, ".codex", "config.toml"))
+    },
+    skill: {
+      action: "created",
+      path: skillPath,
+      fingerprint: await fingerprintAsset(path.join(root, ...skillPath.split("/")))
+    },
+    discovery_directories: [
+      { path: ".agents", created: true },
+      { path: ".codex", created: true }
+    ],
+    visibility,
+    git_exclude: gitExclude
+  });
+
   await refreshValidatedHashes(root, "blank_initialization");
   const validation = await validateProject(root);
   if (!validation.valid) {
@@ -188,7 +300,7 @@ export async function initializeBlankProject(target) {
 const MANAGED_START = "<!-- assistant-managed:start -->";
 const MANAGED_END = "<!-- assistant-managed:end -->";
 
-async function readManagedBlock() {
+export async function readManagedBlock() {
   const templateAgents = await readFile(path.join(templateRoot, "AGENTS.md"), "utf8");
   const start = templateAgents.indexOf(MANAGED_START);
   const end = templateAgents.indexOf(MANAGED_END);
@@ -221,13 +333,14 @@ async function updateCurrentForBootstrap(root, timestamp) {
 - Activity: \`paused\`
 - Active work: existing-project semantic bootstrap
 - Current authorization: survey and canonical staging only
-- Blocked or unauthorized work: normal project work before activation
+- Assistant operation not yet authorized: canonical execution based on this incomplete survey
 - Pending decision: determined by semantic survey
 - Last verified: \`${timestamp}\`
 
 The deterministic inventory is complete, but semantic coverage and closed-book
 validation are not. Resume the versioned bootstrap workflow. Do not present this
-project as ready.
+assistant context as ready. This does not restrict human or non-assistant
+project work.
 `;
   await writeFile(
     currentPath,
@@ -301,7 +414,7 @@ async function installRootAgents(root) {
   };
 }
 
-async function renderInstalledFile(filePath, replacements) {
+export async function renderInstalledFile(filePath, replacements) {
   let content = await readFile(filePath, "utf8");
   for (const [key, value] of Object.entries(replacements)) {
     content = content.replaceAll(`{{${key}}}`, value);
@@ -418,6 +531,10 @@ export async function initializeExistingProject(target, options = {}) {
   }
 
   const inventory = await inventoryProject(root);
+  const preexisting = {
+    agentsDirectory: await pathExists(path.join(root, ".agents")),
+    codexDirectory: await pathExists(path.join(root, ".codex"))
+  };
   const timestamp = new Date().toISOString();
   const replacements = {
     PROJECT_ID: randomUUID(),
@@ -444,12 +561,22 @@ export async function initializeExistingProject(target, options = {}) {
     )
   };
   let agentsChange = null;
+  let configChange = null;
+  let skillsChange = null;
+  let gitExclude = null;
   const createdPaths = [];
 
   try {
     await materializeAssistantDirectory(root, replacements);
     createdPaths.push(path.join(root, ".assistant"));
-    await setWindowsHidden(path.join(root, ".assistant"));
+    const visibility = [];
+    if (await setWindowsHidden(path.join(root, ".assistant"))) {
+      visibility.push({
+        path: ".assistant",
+        created: true,
+        hidden_by_assistant: true
+      });
+    }
     await updateManifestForBootstrap(root);
     await updateCurrentForBootstrap(root, timestamp);
     await writeUtf8(
@@ -508,11 +635,58 @@ export async function initializeExistingProject(target, options = {}) {
 
     agentsChange = await installRootAgents(root);
     if (agentsChange.action === "created") createdPaths.push(path.join(root, "AGENTS.md"));
-    const configChange = await installProjectConfig(root, replacements);
+    configChange = await installProjectConfig(root, replacements);
     if (configChange.action === "created") createdPaths.push(configChange.path);
-    const skillsChange = await installAgentSkills(root);
+    skillsChange = await installAgentSkills(root);
     if (skillsChange.action === "created") createdPaths.push(skillsChange.path);
     const interfaceChanges = await ensureInterfaceDirectories(root);
+    for (const record of [
+      { path: ".agents", created: !preexisting.agentsDirectory },
+      { path: ".codex", created: !preexisting.codexDirectory }
+    ]) {
+      if (record.created && await setWindowsHidden(path.join(root, record.path))) {
+        visibility.push({ ...record, hidden_by_assistant: true });
+      }
+    }
+
+    const excludePatterns = ["/.assistant/"];
+    if (agentsChange.action === "created") excludePatterns.push("/AGENTS.md");
+    if (configChange.action === "created") excludePatterns.push("/.codex/config.toml");
+    if (skillsChange.action === "created") {
+      excludePatterns.push(`/${path.relative(root, skillsChange.path).replaceAll(path.sep, "/")}/`);
+    }
+    gitExclude = await installGitExclude(root, excludePatterns);
+    await writeInstallationLedger(root, {
+      agents: {
+        action: agentsChange.action,
+        path: "AGENTS.md",
+        backup: agentsChange.backup
+          ? path.relative(root, agentsChange.backup).replaceAll(path.sep, "/")
+          : null
+      },
+      codex_config: {
+        action: configChange.action,
+        path: configChange.action === "staged"
+          ? path.relative(root, configChange.path).replaceAll(path.sep, "/")
+          : ".codex/config.toml",
+        fingerprint: configChange.action === "created"
+          ? await fingerprintAsset(configChange.path)
+          : null
+      },
+      skill: {
+        action: skillsChange.action,
+        path: path.relative(root, skillsChange.path).replaceAll(path.sep, "/"),
+        fingerprint: skillsChange.action === "created"
+          ? await fingerprintAsset(skillsChange.path)
+          : null
+      },
+      discovery_directories: [
+        { path: ".agents", created: !preexisting.agentsDirectory },
+        { path: ".codex", created: !preexisting.codexDirectory }
+      ],
+      visibility,
+      git_exclude: gitExclude
+    });
 
     await refreshValidatedHashes(root, "existing_bootstrap_staging");
     const validation = await validateProject(root);
@@ -542,12 +716,24 @@ export async function initializeExistingProject(target, options = {}) {
       validation
     };
   } catch (error) {
-    if (agentsChange?.action === "merged" && agentsChange.backup) {
+    await removeGitExclude(gitExclude);
+    if (agentsChange?.action?.startsWith("merged") && agentsChange.backup) {
       await cp(agentsChange.backup, path.join(root, "AGENTS.md"), { force: true });
     }
     for (const created of createdPaths.reverse()) {
       if (await pathExists(created)) {
         await rm(created, { recursive: true, force: true });
+      }
+    }
+    for (const directory of [
+      !preexisting.agentsDirectory ? path.join(root, ".agents") : null,
+      !preexisting.codexDirectory ? path.join(root, ".codex") : null
+    ].filter(Boolean)) {
+      if (!(await pathExists(directory))) continue;
+      try {
+        await rmdir(directory);
+      } catch (cleanupError) {
+        if (!["ENOTEMPTY", "ENOENT"].includes(cleanupError.code)) throw cleanupError;
       }
     }
     throw error;

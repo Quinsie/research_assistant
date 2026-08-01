@@ -11,6 +11,7 @@ const SYSTEM_DEFAULTS = Object.freeze({
   git_push: "explicit_user_instruction",
   network_public: "task_relevant_public_reference_allowed",
   network_private: "explicit_user_authorization",
+  update_check: "enabled",
   external_action: "explicit_user_authorization",
   destructive_action: "explicit_user_authorization"
 });

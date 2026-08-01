@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +16,7 @@ import {
 import {
   discoverCodexInvocation,
   recoverRejectedBootstrap,
+  spawnCodex,
   validateBootstrapOutput
 } from "../../runtime/lib/bootstrap.mjs";
 import {
@@ -34,6 +35,11 @@ import { authorizeTerminalEpisode } from "../../runtime/lib/episode.mjs";
 import { finalizeInstalledProject } from "../../runtime/lib/initialization.mjs";
 import { refreshValidatedHashes } from "../../runtime/lib/integrity.mjs";
 import { setProjectLocale } from "../../runtime/lib/locale.mjs";
+import {
+  exportAssistant,
+  purgeAssistant,
+  uninstallAssistant
+} from "../../runtime/lib/lifecycle.mjs";
 import {
   completeAgentsControlPlaneMigration,
   completeCodexConfigMigration,
@@ -63,6 +69,11 @@ import {
   loadCanonicalNodes,
   validateProject
 } from "../../runtime/lib/validator.mjs";
+import { updateAssistant } from "../../runtime/lib/updater.mjs";
+import {
+  checkAvailableUpdate,
+  compareVersions
+} from "../../runtime/lib/version-check.mjs";
 
 async function runHook(target, prompt) {
   const script = path.join(
@@ -74,7 +85,11 @@ async function runHook(target, prompt) {
   );
   const child = spawn(process.execPath, [script], {
     cwd: target,
-    env: { ...process.env, ASSISTANT_PROJECT_ROOT: target },
+    env: {
+      ...process.env,
+      ASSISTANT_PROJECT_ROOT: target,
+      ASSISTANT_DISABLE_UPDATE_CHECK: "1"
+    },
     stdio: ["pipe", "pipe", "pipe"]
   });
   let stdout = "";
@@ -95,6 +110,16 @@ async function runHook(target, prompt) {
   const status = await new Promise((resolve) => child.on("close", resolve));
   assert.equal(status, 0, stderr);
   return stdout ? JSON.parse(stdout) : null;
+}
+
+function isWindowsHidden(location) {
+  if (process.platform !== "win32") return null;
+  const result = spawnSync("attrib.exe", [location], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return /^\s*[A-Z]*H[A-Z]*\s+/iu.test(result.stdout);
 }
 
 async function callGateway(target, calls) {
@@ -1415,6 +1440,25 @@ test("existing Codex config is staged instead of overwritten", async () => {
       "utf8"
     );
     assert.doesNotMatch(pending, /\{\{[A-Z_]+\}\}/);
+    const ledger = JSON.parse(
+      await readFile(
+        path.join(target, ".assistant", "internal", "installation.json"),
+        "utf8"
+      )
+    );
+    assert.equal(
+      ledger.assets.codex_config.path,
+      ".assistant/internal/pending/assistant-config.toml"
+    );
+    const manifestPath = path.join(target, ".assistant", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.system_version = "0.0.0-test";
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    assert.equal((await updateAssistant(target)).status, "review_required");
+    assert.equal(
+      await readFile(path.join(target, ".codex", "config.toml"), "utf8"),
+      original
+    );
     assert.equal((await inspectPendingMigrations(target)).pending.length, 1);
     await assert.rejects(
       completeCodexConfigMigration(target, { confirmed: true }),
@@ -1834,6 +1878,34 @@ test("Codex discovery avoids blocked PowerShell shims", async () => {
     } else {
       process.env.PATH = originalPath;
     }
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("Codex JSONL progress parser reports structured token usage", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-jsonl-"));
+  const script = path.join(tempRoot, "fake-codex.mjs");
+  try {
+    await writeFile(
+      script,
+      [
+        "process.stdin.resume();",
+        "process.stdin.on('end', () => {",
+        "  process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'t'}) + '\\n');",
+        "  process.stdout.write(JSON.stringify({type:'turn.completed',usage:{input_tokens:120,cached_input_tokens:20,output_tokens:30,reasoning_output_tokens:5}}) + '\\n');",
+        "});"
+      ].join("\n"),
+      "utf8"
+    );
+    const metrics = await spawnCodex(
+      { command: process.execPath, prefixArgs: [script] },
+      [],
+      tempRoot,
+      "evidence\n"
+    );
+    assert.equal(metrics.tokens_used, 150);
+    assert.equal(metrics.usage.cached_input_tokens, 20);
+  } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
@@ -2933,6 +3005,276 @@ test("installed runtime validates itself and doctor separates unprobed sandbox",
     );
     assert.equal(local.status, 0, local.stderr);
     assert.equal(JSON.parse(local.stdout).valid, true);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("ownership-aware purge removes only assistant integration and preserves project assets", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-purge-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await mkdir(path.join(target, "src"), { recursive: true });
+    await mkdir(path.join(target, "docs"), { recursive: true });
+    await mkdir(path.join(target, ".agents"), { recursive: true });
+    await mkdir(path.join(target, ".codex"), { recursive: true });
+    await writeFile(path.join(target, "src", "app.mjs"), "export const value = 1;\n", "utf8");
+    await writeFile(path.join(target, "docs", "notes.md"), "human notes\n", "utf8");
+    await writeFile(path.join(target, ".agents", "keep.txt"), "project owned\n", "utf8");
+    await writeFile(path.join(target, "AGENTS.md"), "# Existing rules\n\nRun tests.\n", "utf8");
+    const initializedGit = spawnSync("git", ["init"], {
+      cwd: target,
+      encoding: "utf8",
+      windowsHide: true
+    });
+    assert.equal(initializedGit.status, 0, initializedGit.stderr);
+
+    await initializeProject(target);
+    const ledger = JSON.parse(
+      await readFile(
+        path.join(target, ".assistant", "internal", "installation.json"),
+        "utf8"
+      )
+    );
+    assert.equal(ledger.assets.agents.action, "merged");
+    assert.equal(ledger.assets.discovery_directories[0].created, false);
+    assert.equal(ledger.assets.discovery_directories[1].created, false);
+    if (process.platform === "win32") {
+      assert.equal(isWindowsHidden(path.join(target, ".assistant")), true);
+      assert.equal(isWindowsHidden(path.join(target, ".agents")), false);
+      assert.equal(isWindowsHidden(path.join(target, ".codex")), false);
+    }
+    assert.match(
+      await readFile(path.join(target, ".git", "info", "exclude"), "utf8"),
+      /assistant-managed:start/
+    );
+
+    await writeFile(path.join(target, "src", "app.mjs"), "export const value = 2;\n", "utf8");
+    await writeFile(path.join(target, "docs", "notes.md"), "updated by human\n", "utf8");
+    await writeFile(
+      path.join(target, "AGENTS.md"),
+      `${await readFile(path.join(target, "AGENTS.md"), "utf8")}\n# Human addition\n`,
+      "utf8"
+    );
+
+    const preview = await purgeAssistant(target);
+    assert.equal(preview.status, "preview");
+    assert.deepEqual(preview.conflicts, []);
+    assert.equal(await pathExists(path.join(target, ".assistant")), true);
+
+    const purged = await purgeAssistant(target, { confirmed: true });
+    assert.equal(purged.status, "completed");
+    assert.equal(await pathExists(path.join(target, ".assistant")), false);
+    assert.equal(await readFile(path.join(target, "src", "app.mjs"), "utf8"), "export const value = 2;\n");
+    assert.equal(await readFile(path.join(target, "docs", "notes.md"), "utf8"), "updated by human\n");
+    assert.equal(await readFile(path.join(target, ".agents", "keep.txt"), "utf8"), "project owned\n");
+    assert.equal(await pathExists(path.join(target, ".codex")), true);
+    assert.equal(await pathExists(path.join(target, ".codex", "config.toml")), false);
+    assert.equal(await pathExists(path.join(target, ".agents", "skills", "assistant-research-workflow")), false);
+    const agents = await readFile(path.join(target, "AGENTS.md"), "utf8");
+    assert.doesNotMatch(agents, /assistant-managed:start/);
+    assert.match(agents, /Existing rules/);
+    assert.match(agents, /Human addition/);
+    assert.doesNotMatch(
+      await readFile(path.join(target, ".git", "info", "exclude"), "utf8"),
+      /assistant-managed:start/
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("purge refuses a changed assistant-owned shared asset before mutation", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-purge-conflict-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "README.md"), "project\n", "utf8");
+    await initializeProject(target);
+    await writeFile(
+      path.join(target, ".codex", "config.toml"),
+      "# changed after install\n",
+      "utf8"
+    );
+    const result = await purgeAssistant(target, { confirmed: true });
+    assert.equal(result.status, "conflict");
+    assert.match(result.conflicts.join("\n"), /\.codex\/config\.toml changed/);
+    assert.equal(await pathExists(path.join(target, ".assistant")), true);
+    assert.match(
+      await readFile(path.join(target, "AGENTS.md"), "utf8"),
+      /assistant-managed:start/
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("destructive lifecycle rejects a tampered ownership path outside assistant assets", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-ledger-tamper-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "README.md"), "must survive\n", "utf8");
+    await initializeProject(target);
+    const ledgerPath = path.join(
+      target,
+      ".assistant",
+      "internal",
+      "installation.json"
+    );
+    const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
+    ledger.assets.codex_config.path = "README.md";
+    await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
+    await assert.rejects(
+      purgeAssistant(target, { confirmed: true }),
+      /outside assistant ownership/
+    );
+    assert.equal(await readFile(path.join(target, "README.md"), "utf8"), "must survive\n");
+    assert.equal(await pathExists(path.join(target, ".assistant")), true);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("uninstall preserves local continuity state and export is loss-aware", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-uninstall-"));
+  const target = path.join(tempRoot, "project");
+  const output = path.join(tempRoot, "portable-export");
+  try {
+    await initializeBlankProject(target);
+    if (process.platform === "win32") {
+      assert.equal(isWindowsHidden(path.join(target, ".assistant")), true);
+      assert.equal(isWindowsHidden(path.join(target, ".agents")), true);
+      assert.equal(isWindowsHidden(path.join(target, ".codex")), true);
+    }
+    await writeFile(
+      path.join(target, ".assistant", "vault", "evidence.bin"),
+      Buffer.from([0, 1, 2, 255])
+    );
+    const exported = await exportAssistant(target, output);
+    assert.equal(exported.status, "completed");
+    const exportManifest = JSON.parse(
+      await readFile(path.join(output, "EXPORT_MANIFEST.json"), "utf8")
+    );
+    assert.equal(exportManifest.schema, "assistant.export/v1");
+    assert.equal(
+      await readFile(path.join(output, "vault", "evidence.bin")).then((value) => value.equals(Buffer.from([0, 1, 2, 255]))),
+      true
+    );
+
+    const preview = await uninstallAssistant(target);
+    assert.equal(preview.status, "preview");
+    const result = await uninstallAssistant(target, { confirmed: true });
+    assert.equal(result.status, "completed");
+    assert.equal(await pathExists(path.join(target, ".assistant")), true);
+    assert.equal(await pathExists(path.join(target, ".assistant", "system")), false);
+    assert.equal(await pathExists(path.join(target, ".assistant", "POLICY.md")), true);
+    assert.equal(await pathExists(path.join(target, ".assistant", "vault", "evidence.bin")), true);
+    assert.equal(await pathExists(path.join(target, "docs")), true);
+    assert.equal(await pathExists(path.join(target, "AGENTS.md")), false);
+    const reinstalled = await updateAssistant(target);
+    assert.equal(reinstalled.status, "completed");
+    assert.equal(await pathExists(path.join(target, ".assistant", "system")), true);
+    assert.equal(await pathExists(path.join(target, "AGENTS.md")), true);
+    assert.equal(
+      await pathExists(
+        path.join(target, ".agents", "skills", "assistant-research-workflow")
+      ),
+      true
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("legacy installation without ownership ledger purges and can initialize again", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-legacy-purge-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "README.md"), "legacy project\n", "utf8");
+    await initializeProject(target);
+    await rm(
+      path.join(target, ".assistant", "internal", "installation.json"),
+      { force: true }
+    );
+    const result = await purgeAssistant(target, { confirmed: true });
+    assert.equal(result.status, "completed");
+    assert.equal(await pathExists(path.join(target, ".assistant")), false);
+    assert.equal(await pathExists(path.join(target, ".agents")), false);
+    assert.equal(await pathExists(path.join(target, ".codex")), false);
+    assert.equal(await readFile(path.join(target, "README.md"), "utf8"), "legacy project\n");
+    const reinitialized = await initializeProject(target);
+    assert.equal(reinitialized.initialization_status, "bootstrap_incomplete");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("explicit system update preserves project-owned AGENTS content and validates", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-update-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    const manifestPath = path.join(target, ".assistant", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.system_version = "0.0.0-test";
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    await writeFile(
+      path.join(target, "AGENTS.md"),
+      `${await readFile(path.join(target, "AGENTS.md"), "utf8")}\n# Human local rule\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(target, ".assistant", "system", "contract.json"),
+      "{\"old\":true}\n",
+      "utf8"
+    );
+
+    const result = await updateAssistant(target);
+    assert.equal(result.status, "completed");
+    assert.equal(result.from_version, "0.0.0-test");
+    assert.equal(result.to_version, "0.1.0-dev");
+    assert.match(await readFile(path.join(target, "AGENTS.md"), "utf8"), /Human local rule/);
+    assert.doesNotMatch(
+      await readFile(path.join(target, ".assistant", "system", "contract.json"), "utf8"),
+      /"old"/
+    );
+    assert.equal((await validateProject(target)).valid, true);
+    assert.equal((await updateAssistant(target)).status, "up_to_date");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("local version checker caches remote metadata and notifies only once", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-version-check-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    assert.equal(compareVersions("0.1.0-dev", "v0.1.0"), -1);
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return {
+        ok: true,
+        json: async () => ({
+          tag_name: "v0.2.0",
+          html_url: "https://example.test/release"
+        })
+      };
+    };
+    const first = await checkAvailableUpdate(target, {
+      fetchImpl,
+      now: Date.parse("2026-08-01T00:00:00Z")
+    });
+    assert.equal(first.available_version, "v0.2.0");
+    const second = await checkAvailableUpdate(target, {
+      fetchImpl,
+      now: Date.parse("2026-08-01T00:01:00Z")
+    });
+    assert.equal(second, null);
+    assert.equal(calls, 1);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
