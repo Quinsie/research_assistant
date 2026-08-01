@@ -1449,6 +1449,39 @@ test("existing Codex config is staged instead of overwritten", async () => {
   }
 });
 
+test("generated Codex config keeps every restricted gateway tool approval explicit", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-approvals-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeProject(target);
+    const config = await readFile(
+      path.join(target, ".codex", "config.toml"),
+      "utf8"
+    );
+    assert.match(config, /default_tools_approval_mode = "prompt"/);
+    for (const toolName of [
+      "source_preflight",
+      "source_read_file",
+      "source_inventory_directory",
+      "source_snapshot",
+      "report_write_new",
+      "report_read_exact",
+      "report_edit_exact",
+      "vault_verify"
+    ]) {
+      assert.match(
+        config,
+        new RegExp(
+          `\\[mcp_servers\\.assistant_restricted\\.tools\\.${toolName}\\]\\n` +
+            'approval_mode = "auto"'
+        )
+      );
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("bootstrap coverage validator accounts every inventory entry", () => {
   const inventory = {
     entries: [
