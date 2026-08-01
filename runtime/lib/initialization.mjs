@@ -62,11 +62,11 @@ export async function finalizeInstalledProject(target, options = {}) {
     doctor,
     next:
       maintenanceRequired
-        ? "repair the structure maintenance finding before normal project work"
+        ? "repair the structure finding before assistant-managed canonical work"
         : doctor.status === "ready"
         ? "open Codex in the project root and provide the first project instruction"
         : doctor.status === "blocked"
           ? "complete the environment action reported by doctor, then rerun assistant doctor"
-          : "repair the failed doctor check before normal project work"
+          : "repair the failed doctor check before assistant-managed protected work"
   };
 }
