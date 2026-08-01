@@ -163,7 +163,7 @@ async function updatePersistentBootstrapStatus(target, output) {
 - Activity: \`${manifest.activity_status}\`
 - Active work: \`BOOTSTRAP-EXISTING\`
 - Current authorization: canonical staging and bootstrap resolution only
-- Blocked or unauthorized work: normal project work before activation
+- Assistant operation not yet authorized: canonical execution based on this incomplete survey
 - Critical gap IDs: ${criticalIds.length > 0 ? criticalIds.map((id) => `\`${id}\``).join(", ") : "none"}
 - Material conflict IDs: ${conflictIds.length > 0 ? conflictIds.map((id) => `\`${id}\``).join(", ") : "none"}
 - Candidate route: \`.assistant/internal/bootstrap/staging/\`
@@ -171,6 +171,7 @@ async function updatePersistentBootstrapStatus(target, output) {
 
 The semantic survey is staged but not active canonical knowledge. Resolve the
 listed critical decisions, then resume validation and closed-book activation.
+Human and non-assistant project work remain unaffected.
 `;
   await writeFile(
     currentPath,
@@ -197,20 +198,33 @@ listed critical decisions, then resume validation and closed-book activation.
   return status;
 }
 
-function spawnCodex(invocation, args, cwd, stdinContent) {
+export function spawnCodex(invocation, args, cwd, stdinContent, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(invocation.command, [...invocation.prefixArgs, ...args], {
       cwd,
-      stdio: ["pipe", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });
+    let stdoutBuffer = "";
     let stderr = "";
+    let usage = null;
     let settled = false;
+    const startedAt = Date.now();
     const timeoutMs = 7 * 60 * 1000;
+    const onInterrupt = async () => {
+      await terminateTree();
+      finish(
+        reject,
+        new Error("Codex semantic analysis was interrupted; bootstrap remains resumable")
+      );
+    };
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(heartbeat);
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onInterrupt);
       callback(value);
     };
     const terminateTree = () =>
@@ -244,6 +258,38 @@ function spawnCodex(invocation, args, cwd, stdinContent) {
         )
       );
     }, timeoutMs);
+    process.once("SIGINT", onInterrupt);
+    process.once("SIGTERM", onInterrupt);
+    const heartbeat = setInterval(() => {
+      options.onProgress?.({
+        phase: options.phase ?? "model_analysis",
+        message: "Codex semantic analysis is still running",
+        elapsed_seconds: Math.round((Date.now() - startedAt) / 1000)
+      });
+    }, 15_000);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split(/\r?\n/u);
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "turn.completed" && event.usage) {
+            usage = event.usage;
+          } else if (event.type === "turn.failed" || event.type === "error") {
+            options.onProgress?.({
+              phase: options.phase ?? "model_analysis",
+              message: event.error?.message ?? event.message ?? event.type
+            });
+          }
+        } catch {
+          // Codex JSONL is authoritative; retain non-JSON text only for diagnostics.
+          stderr += `${line}\n`;
+        }
+      }
+    });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
       if (stderr.length > 1_000_000) {
@@ -252,13 +298,26 @@ function spawnCodex(invocation, args, cwd, stdinContent) {
     });
     child.once("error", (error) => finish(reject, error));
     child.once("exit", (code, signal) => {
+      if (stdoutBuffer.trim()) {
+        try {
+          const event = JSON.parse(stdoutBuffer);
+          if (event.type === "turn.completed" && event.usage) usage = event.usage;
+        } catch {
+          stderr += `${stdoutBuffer}\n`;
+        }
+      }
       const tokenMatch = stderr.match(/tokens used\s*\r?\n([\d,]+)/i);
+      const structuredTokens = usage
+        ? (usage.total_tokens ??
+          (Number(usage.input_tokens ?? 0) + Number(usage.output_tokens ?? 0)))
+        : null;
       const metrics = {
         exit_code: code,
         signal: signal ?? null,
-        tokens_used: tokenMatch
+        tokens_used: structuredTokens ?? (tokenMatch
           ? Number.parseInt(tokenMatch[1].replaceAll(",", ""), 10)
-          : null
+          : null),
+        usage
       };
       if (code === 0) finish(resolve, metrics);
       else {
@@ -305,6 +364,10 @@ export async function runSemanticBootstrap(target, options = {}) {
   const evidence = await buildEvidencePacket(root, inventory, {
     priorityPaths: sourceAuthority?.imported_paths ?? []
   });
+  options.onProgress?.({
+    phase: "evidence_packet",
+    message: `Prepared ${evidence.metrics.packet_bytes} byte bounded evidence packet`
+  });
   if (evidence.metrics.priority_omitted_files > 0) {
     throw new Error(
       "explicit initialization source exceeds the loss-aware bootstrap priority budget; " +
@@ -338,6 +401,7 @@ export async function runSemanticBootstrap(target, options = {}) {
     "--ask-for-approval",
     "never",
     "exec",
+    "--json",
     "-C",
     modelWorkspace,
     "--sandbox",
@@ -362,11 +426,16 @@ export async function runSemanticBootstrap(target, options = {}) {
   args.push(prompt);
 
   try {
+    options.onProgress?.({
+      phase: "model_analysis",
+      message: "Started Codex semantic analysis"
+    });
     const initialRunMetrics = await spawnCodex(
       invocation,
       args,
       modelWorkspace,
-      evidence.packet
+      evidence.packet,
+      { onProgress: options.onProgress, phase: "model_analysis" }
     );
     let output = JSON.parse(await readFile(outputPath, "utf8"));
     let findings = validateBootstrapOutput(output, inventory, {
@@ -438,7 +507,8 @@ output itself establishes the correct candidate target.
           schema: "assistant.bootstrap-repair-input/v1",
           findings,
           rejected_output: output
-        })}\n`
+        })}\n`,
+        { onProgress: options.onProgress, phase: "model_repair" }
       );
       output = JSON.parse(await readFile(repairOutputPath, "utf8"));
       findings = [
@@ -494,6 +564,10 @@ output itself establishes the correct candidate target.
       runMetrics
     );
     const status = await updatePersistentBootstrapStatus(root, output);
+    options.onProgress?.({
+      phase: "semantic_complete",
+      message: `Semantic survey completed with ${runMetrics.tokens_used ?? "unknown"} tokens`
+    });
     return {
       schema: "assistant.semantic-bootstrap-result/v1",
       target: root,
