@@ -15,7 +15,9 @@ import {
 } from "../../runtime/lib/contract.mjs";
 import {
   discoverCodexInvocation,
+  persistBootstrapSelection,
   recoverRejectedBootstrap,
+  runSemanticBootstrap,
   spawnCodex,
   validateBootstrapOutput
 } from "../../runtime/lib/bootstrap.mjs";
@@ -23,7 +25,10 @@ import {
   repairDeterministicBootstrapRelations,
   validateBootstrapRepair
 } from "../../runtime/lib/bootstrap-contract.mjs";
-import { buildEvidencePacket } from "../../runtime/lib/evidence-packet.mjs";
+import {
+  buildDiscoveryPacket,
+  buildEvidencePacket
+} from "../../runtime/lib/evidence-packet.mjs";
 import { doctorProject } from "../../runtime/lib/doctor.mjs";
 import { pathExists, writeUtf8 } from "../../runtime/lib/files.mjs";
 import {
@@ -347,6 +352,60 @@ test("validator rejects CURRENT and manifest state drift", async () => {
     assert.ok(
       validation.findings.some(
         (finding) => finding.code === "CURRENT_MANIFEST_DRIFT"
+      )
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("validator rejects bootstrap knowledge activated under a non-ready state", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-premature-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    const knowledgePath = path.join(
+      target,
+      ".assistant",
+      "knowledge",
+      "foundations",
+      "FND-PREMATURE.md"
+    );
+    await writeUtf8(
+      knowledgePath,
+      serializeNodeDocument(
+        {
+          schema: "assistant.node/v1",
+          id: "FND-PREMATURE",
+          type: "foundation",
+          status: "active",
+          authority: "canonical_agent",
+          origin: "bootstrap",
+          relations: []
+        },
+        "# Premature bootstrap knowledge\n"
+      )
+    );
+    await refreshIndex(target);
+    const manifestPath = path.join(target, ".assistant", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.initialization_status = "bootstrap_incomplete";
+    manifest.activity_status = "paused";
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const currentPath = path.join(target, ".assistant", "CURRENT.md");
+    const current = parseNodeDocument(await readFile(currentPath, "utf8"));
+    current.metadata.initialization_status = "bootstrap_incomplete";
+    current.metadata.activity_status = "paused";
+    await writeFile(
+      currentPath,
+      serializeNodeDocument(current.metadata, current.body),
+      "utf8"
+    );
+    const validation = await validateProject(target);
+    assert.equal(validation.valid, false);
+    assert.ok(
+      validation.findings.some(
+        (item) => item.code === "BOOTSTRAP_PREMATURE_ACTIVATION"
       )
     );
   } finally {
@@ -1904,8 +1963,197 @@ test("Codex JSONL progress parser reports structured token usage", async () => {
       "evidence\n"
     );
     assert.equal(metrics.tokens_used, 150);
+    assert.equal(metrics.thread_id, "t");
     assert.equal(metrics.usage.cached_input_tokens, 20);
   } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("bounded discovery applies explicit content boundaries without corpus-specific paths", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-discovery-"));
+  try {
+    await mkdir(path.join(tempRoot, "historical", "private"), {
+      recursive: true
+    });
+    await writeFile(
+      path.join(tempRoot, "AGENTS.md"),
+      "# Rules\n\nDo not inspect content under `historical/private`; metadata is sufficient.\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(tempRoot, "historical", "private", "notes.md"),
+      "content-that-must-not-enter-the-packet\n",
+      "utf8"
+    );
+    const inventory = {
+      summary: { paths: 3, files: 2 },
+      entries: [
+        {
+          path: "AGENTS.md",
+          kind: "file",
+          category: "document",
+          size: 80,
+          sha256: "agents"
+        },
+        {
+          path: "historical/private",
+          kind: "directory",
+          category: "directory",
+          size: 0,
+          sha256: null
+        },
+        {
+          path: "historical/private/notes.md",
+          kind: "file",
+          category: "document",
+          size: 39,
+          sha256: "notes"
+        }
+      ]
+    };
+    const discovery = await buildDiscoveryPacket(tempRoot, inventory);
+    assert.match(discovery.packet, /AGENTS\.md/);
+    assert.doesNotMatch(discovery.packet, /content-that-must-not-enter/);
+    const evidence = await buildEvidencePacket(tempRoot, inventory, {
+      boundaries: [
+        {
+          path: "historical/private",
+          access: "metadata_only",
+          evidence_path: "AGENTS.md"
+        }
+      ]
+    });
+    assert.doesNotMatch(evidence.packet, /content-that-must-not-enter/);
+    assert.match(evidence.packet, /project-discovery-metadata_only/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap selection is durable and cannot silently change effort", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-selection-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    const first = await persistBootstrapSelection(target, {
+      model: "gpt-5.6-sol",
+      effort: "high"
+    });
+    assert.equal(first.effort, "high");
+    const resumed = await persistBootstrapSelection(target, {});
+    assert.deepEqual(resumed, first);
+    await assert.rejects(
+      persistBootstrapSelection(target, {
+        model: "gpt-5.6-sol",
+        effort: "medium"
+      }),
+      /differs from the persisted/
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("semantic bootstrap preserves a Codex thread and genuinely resumes after interruption", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-resume-"));
+  const target = path.join(tempRoot, "project");
+  const bin = path.join(tempRoot, "bin");
+  const fakeScript = process.platform === "win32"
+    ? path.join(bin, "node_modules", "@openai", "codex", "bin", "codex.js")
+    : path.join(bin, "fake-codex.mjs");
+  const marker = path.join(tempRoot, "interrupted.marker");
+  const log = path.join(tempRoot, "args.log");
+  const originalPath = process.env.PATH;
+  const originalMarker = process.env.ASSISTANT_FAKE_MARKER;
+  const originalLog = process.env.ASSISTANT_FAKE_LOG;
+  try {
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "README.md"), "# Existing project\n", "utf8");
+    await initializeProject(target);
+    await mkdir(path.dirname(fakeScript), { recursive: true });
+    if (process.platform === "win32") {
+      await writeFile(path.join(bin, "codex.cmd"), "@exit /b 0\r\n", "utf8");
+    }
+    const fakeSource = [
+      "import { appendFileSync, existsSync, writeFileSync } from 'node:fs';",
+      "const args = process.argv.slice(2);",
+      "appendFileSync(process.env.ASSISTANT_FAKE_LOG, JSON.stringify(args) + '\\n');",
+      "const value = (name) => args[args.indexOf(name) + 1];",
+      "const schema = value('--output-schema');",
+      "const output = value('--output-last-message');",
+      "process.stdin.resume();",
+      "process.stdin.on('end', () => {",
+      "  process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'thread-resume-001'}) + '\\n');",
+      "  if (schema.includes('bootstrap-discovery') && !existsSync(process.env.ASSISTANT_FAKE_MARKER)) {",
+      "    writeFileSync(process.env.ASSISTANT_FAKE_MARKER, 'interrupted\\n');",
+      "    process.exitCode = 9;",
+      "    return;",
+      "  }",
+      "  const payload = schema.includes('bootstrap-discovery')",
+      "    ? {schema:'assistant.bootstrap-discovery/v1',boundaries:[],uncertainties:[]}",
+      "    : {schema:'assistant.bootstrap-output/v1',project_summary:{purpose:null,scope:null,current_state:'Observed existing project',current_authorization:null,authorization_state:'not_authorized',authorized_work:[],blocked_work:['Unspecified project work'],authorization_basis_paths:[],next_safe_route:'Ask the user for direction'},candidate_nodes:[],coverage_groups:[{selector_kind:'exact_path',selector:'README.md',disposition:'preserved',reason:'Root orientation document accounted for'}],gaps:[],conflicts:[]};",
+      "  writeFileSync(output, JSON.stringify(payload));",
+      "  process.stdout.write(JSON.stringify({type:'turn.completed',usage:{input_tokens:10,output_tokens:5}}) + '\\n');",
+      "});"
+    ].join("\n");
+    if (process.platform === "win32") {
+      await writeFile(fakeScript, fakeSource, "utf8");
+    } else {
+      await writeFile(fakeScript, fakeSource, "utf8");
+      await writeFile(
+        path.join(bin, "codex"),
+        `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`,
+        { encoding: "utf8", mode: 0o755 }
+      );
+    }
+    process.env.PATH = bin;
+    process.env.ASSISTANT_FAKE_MARKER = marker;
+    process.env.ASSISTANT_FAKE_LOG = log;
+    await assert.rejects(
+      runSemanticBootstrap(target, {
+        model: "gpt-5.6-sol",
+        effort: "high"
+      }),
+      /session thread-resume-001 is preserved/
+    );
+    const interrupted = JSON.parse(
+      await readFile(
+        path.join(
+          target,
+          ".assistant",
+          "internal",
+          "bootstrap",
+          "execution.json"
+        ),
+        "utf8"
+      )
+    );
+    assert.equal(interrupted.status, "failed");
+    assert.equal(interrupted.thread_id, "thread-resume-001");
+    const semantic = await runSemanticBootstrap(target);
+    assert.equal(semantic.status, "bootstrap_incomplete");
+    const invocations = (await readFile(log, "utf8"))
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line));
+    assert.equal(invocations.length, 3);
+    assert.equal(invocations[0].includes("--ephemeral"), false);
+    assert.equal(invocations[1].includes("resume"), true);
+    assert.equal(invocations[2].includes("resume"), true);
+    assert.ok(
+      invocations.every((args) =>
+        args.includes("gpt-5.6-sol") &&
+        args.includes('model_reasoning_effort="high"')
+      )
+    );
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalMarker === undefined) delete process.env.ASSISTANT_FAKE_MARKER;
+    else process.env.ASSISTANT_FAKE_MARKER = originalMarker;
+    if (originalLog === undefined) delete process.env.ASSISTANT_FAKE_LOG;
+    else process.env.ASSISTANT_FAKE_LOG = originalLog;
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
@@ -2995,7 +3243,9 @@ test("installed runtime validates itself and doctor separates unprobed sandbox",
     const local = await import("node:child_process").then(({ spawnSync }) =>
       spawnSync(
         windows ? "cmd.exe" : launcher,
-        windows ? ["/d", "/c", launcher, "validate"] : ["validate"],
+        windows
+          ? ["/d", "/c", launcher, "validate", "--json"]
+          : ["validate", "--json"],
         {
           cwd: target,
           encoding: "utf8",
