@@ -146,7 +146,9 @@ async function main() {
   const projectRoot = normalizeProjectRoot(input.cwd || process.cwd());
   const deferred = await captureDeferredRequest(projectRoot, input);
   const locale = await localeSetup(projectRoot);
-  const update = await checkAvailableUpdate(projectRoot).catch(() => null);
+  const update = await checkAvailableUpdate(projectRoot, {
+    sessionId: String(input.session_id || "") || null
+  }).catch(() => null);
   let integrity;
   try {
     integrity = await inspectValidatedHashes(projectRoot);

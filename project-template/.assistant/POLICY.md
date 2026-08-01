@@ -74,6 +74,8 @@ or side-effecting external access requires explicit authorization.
 -->
 ## Update check
 
-At most once per cache interval, allow the local non-model checker to request
-the configured public release metadata. Failure or offline status never blocks
-work. Set the value to `disabled` to turn this check off.
+On the first prompt of each identifiable interactive session, allow the local
+non-model checker to request the configured public release metadata. Repeated
+prompts in that session do not repeat the request; when no session identity is
+available, the checker falls back to its cache interval. Failure or offline
+status never blocks work. Set the value to `disabled` to turn this check off.
