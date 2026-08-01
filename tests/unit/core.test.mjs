@@ -1777,12 +1777,32 @@ test("deterministic bootstrap repair changes only relations proven by reciprocal
 });
 
 test("Codex discovery avoids blocked PowerShell shims", async () => {
-  const invocation = await discoverCodexInvocation();
-  assert.notEqual(path.extname(invocation.command).toLowerCase(), ".ps1");
-  if (process.platform === "win32" && invocation.kind === "native") {
-    assert.equal(path.extname(invocation.command).toLowerCase(), ".exe");
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-codex-path-"));
+  const originalPath = process.env.PATH;
+  try {
+    if (process.platform === "win32") {
+      await writeFile(path.join(tempRoot, "codex.ps1"), "exit 1\n", "utf8");
+      await writeFile(path.join(tempRoot, "codex.exe"), "", "utf8");
+    } else {
+      await writeFile(path.join(tempRoot, "codex"), "", { mode: 0o755 });
+    }
+    process.env.PATH = tempRoot;
+    const invocation = await discoverCodexInvocation();
+    assert.notEqual(path.extname(invocation.command).toLowerCase(), ".ps1");
+    if (process.platform === "win32") {
+      assert.equal(path.extname(invocation.command).toLowerCase(), ".exe");
+      assert.equal(invocation.kind, "native");
+    } else {
+      assert.equal(invocation.kind, "path");
+    }
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    await rm(tempRoot, { recursive: true, force: true });
   }
-  assert.ok(["native", "npm-cmd-direct", "path"].includes(invocation.kind));
 });
 
 test("evidence packet includes text but suppresses secret candidate values", async () => {
