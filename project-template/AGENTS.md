@@ -35,7 +35,10 @@ changing, running, testing, or shipping the project.
     activation is blocked. Run the installed `migration` status command,
     explain the staged/active difference, and require explicit completion;
     never overwrite or discard existing AGENTS rules, Codex config, or skills
-    silently.
+    silently. After the migration is complete, run the installed `init`
+    command to continue the persisted bootstrap. Do not substitute a different
+    model or reasoning effort, impose a time limit, or call a fresh semantic
+    bootstrap when a resumable Codex session exists.
 11. If the prompt hook reports canonical integrity drift, treat the changed
     files as `candidate_unintegrated`. Review their authority and reconcile
     them through a canonical transaction before relying on their changed
@@ -47,4 +50,9 @@ changing, running, testing, or shipping the project.
     and ask whether it is intentional. If it is clear and non-conflicting,
     adapt without an unnecessary question. Never roll back or block an
     out-of-band project change merely because assistant state is older.
+13. During existing-project discovery, use the bounded discovery result and
+    its cited orientation evidence. AGENTS is one conventional signal, not the
+    only possible source of repository-wide boundaries. Do not read every file
+    to discover rules, infer restrictions from names such as `archive`, or
+    hardcode a restriction observed in one project as a universal rule.
 <!-- assistant-managed:end -->

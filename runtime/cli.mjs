@@ -4,6 +4,7 @@ import { activateBootstrap } from "./lib/activation.mjs";
 import { authorizeTerminalEpisode } from "./lib/episode.mjs";
 import { doctorProject } from "./lib/doctor.mjs";
 import {
+  persistBootstrapSelection,
   recoverRejectedBootstrap,
   runSemanticBootstrap
 } from "./lib/bootstrap.mjs";
@@ -129,10 +130,26 @@ function humanResult(value) {
     }
     if (completion.readiness) lines.push(`Readiness: ${completion.readiness}.`);
     if (completion.readiness === "system_migration_required") {
-      const installed = process.platform === "win32"
-        ? `${shellTarget(path.join(value.target, ".assistant", "system", "assistant.cmd"))} migration --target ${shellTarget(value.target)}`
-        : `${shellTarget(path.join(value.target, ".assistant", "system", "assistant"))} migration --target ${shellTarget(value.target)}`;
-      lines.push(`Next: inspect staged migrations with ${installed}`);
+      const selection = value.selection?.profile
+        ? `Codex profile '${value.selection.profile}'`
+        : `model '${value.selection?.model ?? "gpt-5.6-sol"}' with ` +
+          `'${value.selection?.effort ?? "high"}' reasoning effort`;
+      lines.push(
+        "The assistant bootstrap is installed, but canonical activation is paused " +
+        "until repository-native rules are reconciled."
+      );
+      lines.push(`Recommended for this initialization task: ${selection}.`);
+      lines.push(`1. Change directory to: ${shellTarget(value.target)}`);
+      lines.push("2. Open interactive Codex in that project root.");
+      lines.push(
+        '3. Send: "Continue Assistant initialization. Review the pending system ' +
+        'migration, explain only the decisions I must make, apply my answers, and ' +
+        'then resume initialization with the persisted model settings."'
+      );
+      lines.push(
+        "Normal project work is not blocked; only reliance on Assistant-managed " +
+        "canonical context is paused."
+      );
     } else if (completion.next) {
       lines.push(`Next: ${completion.next}`);
     }
@@ -206,7 +223,8 @@ function modelConfirmation(target, options, preflight = null) {
       preflight?.project?.projected_packet?.packet_bytes ?? null,
     notice:
       `For initialization quality, the assistant will use ${selection}. ` +
-      "Existing-project semantic analysis may consume substantial tokens. " +
+      "Existing-project bounded discovery and semantic analysis may consume " +
+      "substantial tokens. " +
       "--yes confirms this cost notice only; it does not relax the read-only sandbox.",
     resume_command: `assistant ${forwarded.map((item) =>
       /\s/u.test(item) ? `"${item}"` : item
@@ -273,6 +291,30 @@ async function completeSemanticRun(target, initialized, semantic, preflight = nu
   };
 }
 
+async function pendingMigrationCompletion(
+  target,
+  initialized,
+  selection,
+  preflight = null
+) {
+  const migrations = await inspectPendingMigrations(target);
+  if (migrations.pending.length === 0) return null;
+  await markPendingMigrationRequired(target, migrations);
+  return {
+    ...initialized,
+    ...(preflight ? { preflight } : {}),
+    selection,
+    completion: {
+      schema: "assistant.initialization-completion/v1",
+      initialization_status: "awaiting_user_input",
+      readiness: "system_migration_required",
+      migrations,
+      next:
+        "open interactive Codex in the target project root and resolve the pending system migration before semantic analysis"
+    }
+  };
+}
+
 async function main() {
   const { command, options } = parseArguments(process.argv.slice(2));
   activeCommand = command;
@@ -326,6 +368,20 @@ async function main() {
         mode: "existing-resume",
         initialization_status: priorState.status
       };
+      const selection = await persistBootstrapSelection(target, {
+        profile: options.profile,
+        model: options.model,
+        effort: options.effort
+      });
+      const migration = await pendingMigrationCompletion(
+        target,
+        resumed,
+        selection
+      );
+      if (migration) {
+        printJson(migration);
+        return;
+      }
       if (options["restart-semantic"] === true) {
         const retry = await prepareBootstrapRetry(
           target,
@@ -371,7 +427,8 @@ async function main() {
         profile: options.profile,
         model: options.model,
         effort: options.effort,
-        onProgress: progress
+        onProgress: progress,
+        timeoutSeconds: options["timeout-seconds"]
       });
       progress({ phase: "validation", message: "Validating and finalizing assistant state" });
       printJson(await completeSemanticRun(target, resumed, semantic));
@@ -445,11 +502,27 @@ async function main() {
       printJson({ ...initialized, preflight, completion });
       return;
     }
+    const selection = await persistBootstrapSelection(target, {
+      profile: options.profile,
+      model: options.model,
+      effort: options.effort
+    });
+    const migration = await pendingMigrationCompletion(
+      target,
+      initialized,
+      selection,
+      preflight
+    );
+    if (migration) {
+      printJson(migration);
+      return;
+    }
     const semantic = await runSemanticBootstrap(target, {
       profile: options.profile,
       model: options.model,
       effort: options.effort,
-      onProgress: progress
+      onProgress: progress,
+      timeoutSeconds: options["timeout-seconds"]
     });
     progress({ phase: "validation", message: "Validating and finalizing assistant state" });
     if (semantic.status === "awaiting_user_input") {
@@ -483,7 +556,8 @@ async function main() {
       profile: options.profile,
       model: options.model,
       effort: options.effort,
-      onProgress: progress
+      onProgress: progress,
+      timeoutSeconds: options["timeout-seconds"]
     });
     progress({ phase: "validation", message: "Validating and finalizing assistant state" });
     printJson(
@@ -649,15 +723,32 @@ async function main() {
   throw new Error(`unknown command: ${command}`);
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   process.stderr.write(`assistant: ${error.message}\n`);
   if (
     activeTarget &&
     ["init", "bootstrap", "bootstrap-recover"].includes(activeCommand)
   ) {
-    process.stderr.write(
-      `Resume: assistant init --target ${shellTarget(activeTarget)} --yes\n`
+    const installed = path.join(
+      activeTarget,
+      ".assistant",
+      "system",
+      process.platform === "win32" ? "assistant.cmd" : "assistant"
     );
+    if (await pathExists(installed)) {
+      const command = process.platform === "win32"
+        ? `& ${shellTarget(installed)} init --target ${shellTarget(activeTarget)}`
+        : `${shellTarget(installed)} init --target ${shellTarget(activeTarget)}`;
+      process.stderr.write(
+        "Assistant initialization is incomplete; ordinary project work is not blocked.\n" +
+        `Continue the persisted attempt with: ${command}\n`
+      );
+    } else {
+      process.stderr.write(
+        "Initialization did not install a resumable target runtime. Correct the " +
+        "reported cause, then rerun the original init command.\n"
+      );
+    }
   }
   process.exitCode = 1;
 });

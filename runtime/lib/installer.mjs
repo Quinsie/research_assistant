@@ -27,6 +27,7 @@ const templateRoot = path.join(packageRoot, "project-template");
 const projectRuntimeRoot = path.join(packageRoot, "runtime", "project");
 const installedLibraryNames = [
   "activation.mjs",
+  "bootstrap.mjs",
   "bootstrap-contract.mjs",
   "bootstrap-resolution.mjs",
   "contract.mjs",
@@ -34,6 +35,7 @@ const installedLibraryNames = [
   "doctor.mjs",
   "deferred.mjs",
   "episode.mjs",
+  "evidence-packet.mjs",
   "files.mjs",
   "initialization.mjs",
   "integrity.mjs",
@@ -202,6 +204,16 @@ export async function copyInstalledRuntime(destination) {
       { errorOnExist: true, force: false }
     );
   }
+  await cp(
+    path.join(packageRoot, "runtime", "prompts"),
+    path.join(destination, "prompts"),
+    { recursive: true, errorOnExist: true, force: false }
+  );
+  await cp(
+    path.join(packageRoot, "runtime", "schemas"),
+    path.join(destination, "schemas"),
+    { recursive: true, errorOnExist: true, force: false }
+  );
 }
 
 export async function initializeBlankProject(target) {
