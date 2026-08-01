@@ -120,13 +120,16 @@ async function localeSetup(projectRoot) {
         "utf8"
       )
     );
+    const localeCommand = process.platform === "win32"
+      ? ".assistant\\system\\assistant.cmd locale --set <BCP-47-tag>"
+      : ".assistant/system/assistant locale --set <BCP-47-tag>";
     return manifest.project_locale
       ? null
       : {
           status: "required",
           instruction:
             "Infer the language of this first interactive user prompt and run " +
-            "`.assistant\\system\\assistant.cmd locale --set <BCP-47-tag>` " +
+            `\`${localeCommand}\` ` +
             "before creating any user-facing report. Do not ask merely to choose a language."
         };
   } catch (error) {

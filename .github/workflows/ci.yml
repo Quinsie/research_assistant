@@ -14,10 +14,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows:
-    name: required / windows
-    runs-on: windows-latest
+  platform:
+    name: required / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+          - name: linux
+            os: ubuntu-latest
+          - name: macos
+            os: macos-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -27,6 +37,7 @@ jobs:
           node-version: "20"
           package-manager-cache: false
       - name: Provision Codex sandbox test group
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if (-not (Get-LocalGroup -Name CodexSandboxUsers -ErrorAction SilentlyContinue)) {

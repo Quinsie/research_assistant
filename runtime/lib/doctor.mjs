@@ -127,6 +127,7 @@ export async function doctorProject(target, options = {}) {
   }
 
   const runtimePaths = [
+    ".assistant/system/assistant",
     ".assistant/system/runtime/gateway.mjs",
     ".assistant/system/runtime/user-prompt-submit.mjs",
     ".assistant/system/runtime/assistant.mjs",
@@ -193,38 +194,64 @@ export async function doctorProject(target, options = {}) {
     );
   }
 
-  if (options.probeSandbox !== false && process.platform === "win32") {
+  if (options.probeSandbox !== false) {
     try {
       const invocation = await discoverCodexInvocation();
       const common = ["sandbox", "-C", root, "-P", "assistant_project"];
-      const publicProbe = await run(
-        invocation,
-        [...common, "cmd.exe", "/d", "/c", "type", ".assistant\\manifest.json"],
-        root
-      );
-      const restrictedProbe = await run(
-        invocation,
-        [
-          ...common,
-          "cmd.exe",
-          "/d",
-          "/c",
-          "type",
-          WINDOWS_RESTRICTED_CANARY.replaceAll("/", "\\")
-        ],
-        root
-      );
-      const restrictedWriteProbe = await run(
-        invocation,
-        [
-          ...common,
-          "cmd.exe",
-          "/d",
-          "/c",
-          `echo direct write bypass>${WINDOWS_RESTRICTED_CANARY.replaceAll("/", "\\")}`
-        ],
-        root
-      );
+      const publicProbe = process.platform === "win32"
+        ? await run(
+            invocation,
+            [...common, "cmd.exe", "/d", "/c", "type", ".assistant\\manifest.json"],
+            root
+          )
+        : await run(
+            invocation,
+            [...common, "--", "/bin/cat", ".assistant/manifest.json"],
+            root
+          );
+      const restrictedProbe = process.platform === "win32"
+        ? await run(
+            invocation,
+            [
+              ...common,
+              "cmd.exe",
+              "/d",
+              "/c",
+              "type",
+              WINDOWS_RESTRICTED_CANARY.replaceAll("/", "\\")
+            ],
+            root
+          )
+        : await run(
+            invocation,
+            [...common, "--", "/bin/cat", WINDOWS_RESTRICTED_CANARY],
+            root
+          );
+      const restrictedWriteProbe = process.platform === "win32"
+        ? await run(
+            invocation,
+            [
+              ...common,
+              "cmd.exe",
+              "/d",
+              "/c",
+              `echo direct write bypass>${WINDOWS_RESTRICTED_CANARY.replaceAll("/", "\\")}`
+            ],
+            root
+          )
+        : await run(
+            invocation,
+            [
+              ...common,
+              "--",
+              "/bin/sh",
+              "-c",
+              "printf 'direct write bypass\\n' > \"$1\"",
+              "assistant-doctor",
+              path.join(root, ...WINDOWS_RESTRICTED_CANARY.split("/"))
+            ],
+            root
+          );
       await writeFile(
         path.join(root, ...WINDOWS_RESTRICTED_CANARY.split("/")),
         "assistant restricted read denial canary\n",

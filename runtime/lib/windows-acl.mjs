@@ -146,13 +146,6 @@ export async function enforceWindowsRestrictedAcls(
   target,
   dynamicBoundaries = []
 ) {
-  if (process.platform !== "win32") {
-    return {
-      schema: "assistant.windows-restricted-acl/v1",
-      status: "not_applicable",
-      boundaries: []
-    };
-  }
   const root = path.resolve(target);
   const canaryPath = path.join(root, ...WINDOWS_RESTRICTED_CANARY.split("/"));
   await mkdir(path.dirname(canaryPath), { recursive: true });
@@ -161,6 +154,13 @@ export async function enforceWindowsRestrictedAcls(
     "assistant restricted read denial canary\n",
     "utf8"
   );
+  if (process.platform !== "win32") {
+    return {
+      schema: "assistant.windows-restricted-acl/v1",
+      status: "not_applicable",
+      boundaries: []
+    };
+  }
   const sid = await resolveCodexSandboxGroupSid();
   const combined = [
     ...STANDARD_RESTRICTED_BOUNDARIES,

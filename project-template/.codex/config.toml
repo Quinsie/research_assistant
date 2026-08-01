@@ -25,7 +25,7 @@ command = {{NODE_EXECUTABLE_TOML}}
 args = [{{GATEWAY_SCRIPT_TOML}}]
 cwd = {{PROJECT_ROOT_TOML}}
 required = true
-default_tools_approval_mode = "writes"
+default_tools_approval_mode = "prompt"
 enabled_tools = [
   "source_preflight",
   "source_read_file",
@@ -37,6 +37,15 @@ enabled_tools = [
   "vault_verify"
 ]
 
+[mcp_servers.assistant_restricted.tools.source_preflight]
+approval_mode = "auto"
+
+[mcp_servers.assistant_restricted.tools.source_read_file]
+approval_mode = "auto"
+
+[mcp_servers.assistant_restricted.tools.source_inventory_directory]
+approval_mode = "auto"
+
 [mcp_servers.assistant_restricted.tools.source_snapshot]
 approval_mode = "auto"
 
@@ -44,4 +53,10 @@ approval_mode = "auto"
 approval_mode = "auto"
 
 [mcp_servers.assistant_restricted.tools.report_edit_exact]
+approval_mode = "auto"
+
+[mcp_servers.assistant_restricted.tools.report_read_exact]
+approval_mode = "auto"
+
+[mcp_servers.assistant_restricted.tools.vault_verify]
 approval_mode = "auto"
