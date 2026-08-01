@@ -2355,6 +2355,140 @@ test("semantic contract rejects current-only compression and lost exact conditio
   );
 });
 
+test("semantic migration exposes document-code classification conflicts before activation", async () => {
+  const tempRoot = await mkdtemp(
+    path.join(os.tmpdir(), "assistant-document-code-conflict-")
+  );
+  try {
+    const plannedPath = "planning/classification.md";
+    const activePath = "src/active_experiment.py";
+    const planned = [
+      "# Experiment plan",
+      "",
+      "The approved classification is EXP-LEGACY."
+    ].join("\n");
+    const active = 'EXPERIMENT_CLASSIFICATION = "EXP-ACTIVE"\n';
+    await mkdir(path.join(tempRoot, "planning"), { recursive: true });
+    await mkdir(path.join(tempRoot, "src"), { recursive: true });
+    await writeFile(path.join(tempRoot, plannedPath), planned, "utf8");
+    await writeFile(path.join(tempRoot, activePath), active, "utf8");
+    const evidence = await buildSemanticEvidenceBatches(
+      tempRoot,
+      {
+        summary: { paths: 2, files: 2 },
+        entries: [
+          {
+            path: plannedPath,
+            kind: "file",
+            category: "document",
+            size: Buffer.byteLength(planned),
+            sha256: "planned"
+          },
+          {
+            path: activePath,
+            kind: "file",
+            category: "code",
+            size: Buffer.byteLength(active),
+            sha256: "active"
+          }
+        ]
+      }
+    );
+    const packet = evidence.batches.map((batch) => batch.packet).join("\n");
+    assert.match(packet, /EXP-LEGACY/);
+    assert.match(packet, /EXP-ACTIVE/);
+
+    const semanticLedger = {
+      schema: "assistant.semantic-ledger/v1",
+      batches: evidence.batches.map((batch) => ({
+        unit_analyses: batch.unit_ids.map((unit_id) => {
+          const unit = evidence.manifest.units.find(
+            (candidateUnit) => candidateUnit.unit_id === unit_id
+          );
+          const plannedUnit = unit.path === plannedPath;
+          return {
+            unit_id,
+            classification: "canonical_knowledge_candidate",
+            semantic_roles: plannedUnit ? ["plan"] : ["current"],
+            exact_elements: [plannedUnit ? "EXP-LEGACY" : "EXP-ACTIVE"],
+            conflict_candidates: [
+              "The planned and active experiment classifications disagree."
+            ]
+          };
+        })
+      }))
+    };
+    const targetId = "WORK-CONFLICT-001";
+    const output = {
+      schema: "assistant.bootstrap-output/v1",
+      project_summary: {
+        purpose: "Conflict fixture",
+        scope: "Existing-project migration",
+        current_state: "Classification authority is unresolved.",
+        current_authorization: "None",
+        authorization_state: "not_authorized",
+        authorized_work: [],
+        blocked_work: ["Experiment execution"],
+        authorization_basis_paths: [],
+        next_safe_route: "Ask the user to resolve the classification."
+      },
+      candidate_nodes: [
+        {
+          id: targetId,
+          type: "work",
+          status: "blocked",
+          authority: "candidate_unintegrated",
+          certainty: "direct",
+          relations: [],
+          title: "Unresolved experiment classification",
+          body:
+            "The plan says EXP-LEGACY while active code says EXP-ACTIVE.",
+          semantic_sections: [],
+          evidence_paths: [plannedPath, activePath],
+          legacy_aliases: []
+        }
+      ],
+      coverage_groups: [],
+      semantic_coverage: evidence.manifest.units.map((unit) => ({
+        unit_id: unit.unit_id,
+        disposition: "consolidated",
+        target_ids: [targetId],
+        reason: "Both observations were retained."
+      })),
+      legacy_surfaces: [],
+      lineage: {
+        origin_ids: [targetId],
+        ordered_stage_ids: [],
+        current_ids: [targetId],
+        complete: true,
+        missing: []
+      },
+      closed_book_audit: {
+        origin_to_current_explainable: true,
+        current_authorization_explainable: true,
+        hypotheses_explainable: true,
+        decisions_explainable: true,
+        live_legacy_dependencies: [],
+        missing_concerns: []
+      },
+      gaps: [],
+      conflicts: []
+    };
+    const findings = validateBootstrapOutput(
+      output,
+      { entries: [] },
+      { semanticManifest: evidence.manifest, semanticLedger }
+    );
+    assert.ok(
+      findings.some((finding) =>
+        /unrepresented conflict candidates/.test(finding)
+      )
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("bootstrap selection is durable and cannot silently change effort", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-selection-"));
   const target = path.join(tempRoot, "project");
