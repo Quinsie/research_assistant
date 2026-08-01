@@ -129,8 +129,7 @@ export const REQUIRED_CANONICAL_FILES = [
 ];
 
 export const RESTRICTED_ZONES = [
-  "docs/user",
-  "docs/report",
+  "docs",
   ".assistant/vault",
   ".assistant/internal/restricted"
 ];

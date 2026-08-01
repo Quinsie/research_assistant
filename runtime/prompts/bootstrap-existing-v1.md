@@ -11,8 +11,8 @@ You are performing the one-time semantic bootstrap of an existing local project.
   package-manager hooks.
 - Do not modify any file.
 - The bootstrap survey is the one-time exception that may inspect existing
-  `docs/user`, `docs/report`, and similarly named legacy paths. Treat their
-  contents according to observed role, not their names.
+  human documents wherever they are located. Treat contents according to
+  observed role, not directory, filename, extension, language, or age.
 - Treat `.assistant/internal/bootstrap/inventory.json` as the deterministic path
   inventory. Account for its entries, but do not assume the inventory's category
   labels establish project meaning.
@@ -136,13 +136,38 @@ consistent active evidence establishes it.
   `superseded` entries must name the canonical target IDs that retain the
   meaning. Do not replace unit-level coverage with a path prefix or inventory
   category.
+- `document_assets` must contain exactly one entry for every
+  `semantic-manifest.json.document_assets` item. Classify by extracted meaning,
+  not filename, extension, directory, age, or apparent recency. A spreadsheet
+  may be a human plan/report or research data. A root README may be a
+  repository surface that should stay in place. Unsupported, encrypted,
+  image-only, corrupt, or ambiguous assets must use `ask_user`; never silently
+  discard them.
+- For a human-owned document outside `docs/`, propose either `move_to_docs`
+  with an exact collision-free destination under `docs/`, or `cold_in_place`
+  when repository convention or user ownership makes movement undesirable.
+  Movement is only a proposal: it requires one whole-plan user confirmation
+  and cannot occur during model analysis. `already_in_docs` is for human
+  documents already below `docs/`; `report_output` is only for the
+  `docs/report/` derived-report interface. Code, data, config, generated
+  artifacts, and Assistant control files use `not_document_asset`.
+- A human document may use `move_to_docs`, `cold_in_place`, or
+  `already_in_docs` only after its durable meaning has canonical target IDs.
+  Do not leave a live source or report dependency in canonical nodes. Set
+  `requires_confirmation: true` for `move_to_docs`, `cold_in_place`, and
+  `ask_user`; all other dispositions use false. Model-produced proposals use
+  `decision_status: pending` when confirmation is required and
+  `not_required` otherwise. Only the deterministic resolution transaction may
+  change a pending decision to `approved`.
 - Classify every manifest `control_candidate_path` and every ledger unit whose
   semantic roles include current, plan, decision, authorization, history, or
   instruction in `legacy_surfaces`. Determine role from content and relations,
   not directory, filename, or language. A repository-native build or test
   instruction may remain, while a competing current, plan, decision,
   authorization, policy, or router surface must be staged for migration. Do
-  not delete, move, or silently demote it.
+  not delete, move, or silently demote it. A fully integrated human document
+  that will be protected by the approved document cold boundary may use
+  `integrate_then_cold`; this is not a live dependency.
 - `lineage` must route evidenced origin through material intermediate stages
   to current IDs. Set `complete: false` and create an initialization-level gap
   when the evidence cannot support that chain.

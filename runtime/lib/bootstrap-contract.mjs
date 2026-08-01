@@ -274,6 +274,163 @@ export function validateBootstrapOutput(output, inventory, options = {}) {
       );
     }
 
+    const manifestAssets = new Map(
+      (semanticManifest.document_assets ?? []).map((asset) => [asset.path, asset])
+    );
+    const outputAssets = new Map();
+    const destinations = new Set();
+    for (const asset of output?.document_assets ?? []) {
+      if (outputAssets.has(asset.path)) {
+        findings.push(`duplicate document asset ${asset.path}`);
+        continue;
+      }
+      outputAssets.set(asset.path, asset);
+      if (!manifestAssets.has(asset.path)) {
+        findings.push(`document asset targets unknown path ${asset.path}`);
+      }
+      const requiresConfirmation = [
+        "move_to_docs",
+        "cold_in_place",
+        "ask_user"
+      ].includes(asset.proposed_action);
+      if (asset.requires_confirmation !== requiresConfirmation) {
+        findings.push(
+          `document asset ${asset.path} has inconsistent requires_confirmation`
+        );
+      }
+      if (
+        requiresConfirmation &&
+        !["pending", "approved"].includes(asset.decision_status)
+      ) {
+        findings.push(`document asset ${asset.path} requires a decision status`);
+      }
+      if (
+        asset.decision_status === "approved" &&
+        options.allowApprovedDocumentAssets !== true
+      ) {
+        findings.push(
+          `document asset ${asset.path} cannot be pre-approved by model output`
+        );
+      }
+      const allowedActionsByRole = {
+        human_document: new Set([
+          "move_to_docs",
+          "cold_in_place",
+          "already_in_docs",
+          "report_output",
+          "ask_user"
+        ]),
+        repository_surface: new Set([
+          "move_to_docs",
+          "cold_in_place",
+          "already_in_docs",
+          "ask_user"
+        ]),
+        assistant_control: new Set(["not_document_asset"]),
+        data: new Set(["not_document_asset"]),
+        config: new Set(["not_document_asset"]),
+        code: new Set(["not_document_asset"]),
+        artifact: new Set(["not_document_asset"]),
+        ambiguous: new Set(["ask_user"])
+      };
+      if (
+        !allowedActionsByRole[asset.observed_role]?.has(asset.proposed_action)
+      ) {
+        findings.push(
+          `document asset ${asset.path} has action ${asset.proposed_action} incompatible with role ${asset.observed_role}`
+        );
+      }
+      const manifestAsset = manifestAssets.get(asset.path);
+      if (
+        manifestAsset?.already_in_docs &&
+        ["move_to_docs", "cold_in_place"].includes(asset.proposed_action)
+      ) {
+        findings.push(
+          `document asset ${asset.path} is already protected by the docs boundary`
+        );
+      }
+      if (
+        manifestAsset &&
+        !["extracted", "partial"].includes(manifestAsset.extraction_status) &&
+        asset.proposed_action !== "ask_user"
+      ) {
+        findings.push(
+          `document asset ${asset.path} with extraction status ${manifestAsset.extraction_status} requires ask_user`
+        );
+      }
+      if (
+        !requiresConfirmation &&
+        asset.decision_status !== "not_required"
+      ) {
+        findings.push(
+          `document asset ${asset.path} must use decision_status not_required`
+        );
+      }
+      const isHumanDocument = asset.observed_role === "human_document";
+      if (
+        isHumanDocument &&
+        ["move_to_docs", "cold_in_place", "already_in_docs"].includes(
+          asset.proposed_action
+        ) &&
+        (asset.target_ids ?? []).length === 0
+      ) {
+        findings.push(
+          `human document ${asset.path} lacks a canonical meaning target`
+        );
+      }
+      for (const target of asset.target_ids ?? []) {
+        if (!ids.has(target)) {
+          findings.push(
+            `document asset ${asset.path} targets missing candidate ${target}`
+          );
+        }
+      }
+      const destination = asset.proposed_destination;
+      if (asset.proposed_action === "move_to_docs") {
+        if (
+          typeof destination !== "string" ||
+          !destination.startsWith("docs/") ||
+          destination.startsWith("docs/report/") ||
+          destination === asset.path ||
+          destination.includes("..") ||
+          pathIsAbsoluteLike(destination)
+        ) {
+          findings.push(
+            `document asset ${asset.path} has an unsafe move destination`
+          );
+        } else if (destinations.has(destination)) {
+          findings.push(`duplicate document destination ${destination}`);
+        } else {
+          destinations.add(destination);
+        }
+      } else if (destination !== null) {
+        findings.push(
+          `document asset ${asset.path} must not set a destination for ${asset.proposed_action}`
+        );
+      }
+      if (
+        asset.proposed_action === "already_in_docs" &&
+        !(asset.path === "docs" || asset.path.startsWith("docs/"))
+      ) {
+        findings.push(
+          `document asset ${asset.path} is not already inside docs`
+        );
+      }
+      if (
+        asset.proposed_action === "report_output" &&
+        !asset.path.startsWith("docs/report/")
+      ) {
+        findings.push(
+          `document asset ${asset.path} is outside the report interface`
+        );
+      }
+    }
+    for (const assetPath of manifestAssets.keys()) {
+      if (!outputAssets.has(assetPath)) {
+        findings.push(`document asset classification misses ${assetPath}`);
+      }
+    }
+
     if (semanticLedger) {
       const analysisByUnit = new Map();
       for (const batch of semanticLedger.batches ?? []) {
@@ -425,7 +582,11 @@ export function validateBootstrapOutput(output, inventory, options = {}) {
         ) ||
         (
           surface.status === "resolved" &&
-          !["integrate_then_move", "integrate_then_remove"].includes(
+          ![
+            "integrate_then_cold",
+            "integrate_then_move",
+            "integrate_then_remove"
+          ].includes(
             surface.proposed_action
           )
         )
@@ -455,6 +616,10 @@ export function validateBootstrapOutput(output, inventory, options = {}) {
     }
   }
   return findings;
+}
+
+function pathIsAbsoluteLike(value) {
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(value);
 }
 
 function without(object, keys) {

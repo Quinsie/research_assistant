@@ -38,6 +38,7 @@ const installedLibraryNames = [
   "codex.mjs",
   "doctor.mjs",
   "deferred.mjs",
+  "document-extractor.mjs",
   "episode.mjs",
   "evidence-packet.mjs",
   "files.mjs",
@@ -50,6 +51,7 @@ const installedLibraryNames = [
   "migration.mjs",
   "policy.mjs",
   "projection.mjs",
+  "relocation.mjs",
   "router.mjs",
   "structure.mjs",
   "transaction.mjs",
@@ -416,6 +418,7 @@ async function installRootAgents(root, inventory) {
           "keep non-conflicting repository-native build, test, and subtree instructions in AGENTS.md",
           "move durable assistant side-effect policy to .assistant/POLICY.md when it should remain active",
           "remove or rewrite legacy canonical orientation and state-owner routes so .assistant is the only assistant control plane",
+          "do not move, delete, rename, or demote the referenced project documents; semantic bootstrap will integrate and classify them before any separate relocation proposal",
           "review the proposed result, then explicitly confirm migration completion"
         ],
         created_at: new Date().toISOString()
@@ -528,7 +531,7 @@ async function installAgentSkills(root) {
 
 async function ensureInterfaceDirectories(root) {
   const changes = [];
-  for (const relative of ["docs/user", "docs/report"]) {
+  for (const relative of ["docs/report"]) {
     const destination = path.join(root, ...relative.split("/"));
     if (!(await pathExists(destination))) {
       await mkdir(destination, { recursive: true });
@@ -547,7 +550,15 @@ export async function initializeExistingProject(target, options = {}) {
     throw new Error("reserved path conflict: target already contains .assistant");
   }
 
-  const inventory = await inventoryProject(root);
+  let inventory = await inventoryProject(root);
+  const sourcePlan = await planInitializationSources(
+    root,
+    options.sources ?? []
+  );
+  const restrictedBoundaries = [
+    ...(options.restrictedBoundaries ?? []),
+    ...sourcePlan.restrictedBoundaries
+  ];
   const preexisting = {
     agentsDirectory: await pathExists(path.join(root, ".agents")),
     codexDirectory: await pathExists(path.join(root, ".codex"))
@@ -574,7 +585,7 @@ export async function initializeExistingProject(target, options = {}) {
       path.join(root, ".assistant", "system", "runtime", "gateway.mjs")
     ),
     ADDITIONAL_RESTRICTED_TOML: renderAdditionalRestrictedToml(
-      options.restrictedBoundaries ?? []
+      restrictedBoundaries
     )
   };
   let agentsChange = null;
@@ -586,6 +597,21 @@ export async function initializeExistingProject(target, options = {}) {
   try {
     await materializeAssistantDirectory(root, replacements);
     createdPaths.push(path.join(root, ".assistant"));
+    const importedSources = await stageInitializationSources(root, sourcePlan);
+    if (importedSources.length > 0) {
+      inventory = mergeInventories(
+        inventory,
+        await inventoryImportedSources(root, importedSources)
+      );
+    }
+    const importedPriorityPaths = inventory.entries
+      .filter((entry) =>
+        entry.kind === "file" &&
+        importedSources.some((imported) =>
+          entry.path === imported || entry.path.startsWith(`${imported}/`)
+        )
+      )
+      .map((entry) => entry.path);
     const visibility = [];
     if (await setWindowsHidden(path.join(root, ".assistant"))) {
       visibility.push({
@@ -600,7 +626,7 @@ export async function initializeExistingProject(target, options = {}) {
       path.join(root, ".assistant", "internal", "bootstrap", "inventory.json"),
       `${JSON.stringify(inventory, null, 2)}\n`
     );
-    if ((options.importedSources ?? []).length > 0) {
+    if (importedSources.length > 0) {
       await writeUtf8(
         path.join(
           root,
@@ -613,7 +639,8 @@ export async function initializeExistingProject(target, options = {}) {
           schema: "assistant.bootstrap-source-authority/v1",
           authority: "current_user_instruction",
           purpose: "canonical_initialization",
-          imported_paths: options.importedSources,
+          imported_paths: importedSources,
+          priority_paths: importedPriorityPaths,
           recorded_at: timestamp
         }, null, 2)}\n`
       );
@@ -628,7 +655,7 @@ export async function initializeExistingProject(target, options = {}) {
       ),
       `${JSON.stringify({
         schema: "assistant.restricted-boundaries/v1",
-        boundaries: options.restrictedBoundaries ?? [],
+        boundaries: restrictedBoundaries,
         recorded_at: timestamp
       }, null, 2)}\n`
     );
@@ -712,7 +739,7 @@ export async function initializeExistingProject(target, options = {}) {
     }
     await enforceWindowsRestrictedAcls(
       root,
-      options.restrictedBoundaries ?? []
+      restrictedBoundaries
     );
 
     return {
@@ -757,11 +784,11 @@ export async function initializeExistingProject(target, options = {}) {
   }
 }
 
-async function importInitializationSources(root, sources) {
-  const imported = [];
+async function planInitializationSources(root, sources) {
+  const items = [];
   const restrictedBoundaries = [];
-  const createdDirectories = [];
-  for (const sourceInput of sources) {
+  for (let index = 0; index < sources.length; index += 1) {
+    const sourceInput = sources[index];
     const source = path.resolve(sourceInput);
     if (!(await pathExists(source))) {
       throw new Error(`initialization source does not exist: ${source}`);
@@ -769,56 +796,120 @@ async function importInitializationSources(root, sources) {
     const sourceInfo = await lstat(source);
     const destinationRoot = path.join(
       root,
-      "docs",
-      "user",
-      "bootstrap-source"
+      ".assistant",
+      "vault",
+      "intake",
+      `source-${String(index + 1).padStart(3, "0")}`
     );
     if (sourceInfo.isDirectory() && isInside(source, destinationRoot)) {
       throw new Error(
         "initialization source directory cannot contain its import destination"
       );
     }
-    for (const directory of [
-      path.join(root, "docs"),
-      path.join(root, "docs", "user"),
-      destinationRoot
-    ]) {
-      if (!(await pathExists(directory))) createdDirectories.push(directory);
-    }
-    await mkdir(destinationRoot, { recursive: true });
     const destination = path.join(destinationRoot, path.basename(source));
-    if (await pathExists(destination)) {
-      throw new Error(`initialization source collision: ${destination}`);
-    }
-    await cp(source, destination, {
-      recursive: true,
-      errorOnExist: true,
-      force: false
-    });
-    imported.push(path.relative(root, destination).replaceAll(path.sep, "/"));
     if (isInside(root, source)) {
       const relative = path.relative(root, source).replaceAll(path.sep, "/");
       const coveredByDefault =
-        relative === "docs/user" ||
-        relative.startsWith("docs/user/") ||
-        relative === "docs/report" ||
-        relative.startsWith("docs/report/") ||
+        relative === "docs" ||
+        relative.startsWith("docs/") ||
         relative === ".assistant/vault" ||
         relative.startsWith(".assistant/vault/");
       if (!coveredByDefault) {
         restrictedBoundaries.push({
           relative,
-          kind: "source",
+          kind: "document",
           boundary_kind: sourceInfo.isDirectory() ? "directory" : "file",
           reason: "explicit_initialization_source"
         });
       }
     }
+    items.push({ source, sourceInfo, destination });
   }
   return {
-    imported,
-    restrictedBoundaries,
-    createdDirectories: [...new Set(createdDirectories)]
+    items,
+    restrictedBoundaries
+  };
+}
+
+async function stageInitializationSources(root, plan) {
+  const imported = [];
+  for (const item of plan.items) {
+    await mkdir(path.dirname(item.destination), { recursive: true });
+    await cp(item.source, item.destination, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    imported.push(path.relative(root, item.destination).replaceAll(path.sep, "/"));
+  }
+  return imported;
+}
+
+async function inventoryImportedSources(root, importedPaths) {
+  const inventories = [];
+  for (const relative of importedPaths) {
+    const absolute = path.join(root, ...relative.split("/"));
+    const info = await lstat(absolute);
+    const scanRoot = info.isDirectory() ? absolute : path.dirname(absolute);
+    const inventory = await inventoryProject(scanRoot);
+    const prefix = info.isDirectory()
+      ? relative
+      : path.dirname(relative).replaceAll("\\", "/");
+    inventories.push({
+      ...inventory,
+      entries: inventory.entries.map((entry) => ({
+        ...entry,
+        path: `${prefix}/${entry.path}`.replace(/\/+/gu, "/")
+      }))
+    });
+  }
+  return inventories.reduce(
+    (combined, inventory) => mergeInventories(combined, inventory),
+    {
+      schema: "assistant.inventory/v1",
+      root,
+      generated_at: new Date().toISOString(),
+      representation: {},
+      summary: {
+        paths: 0,
+        files: 0,
+        total_bytes: 0,
+        unhashed_bytes: 0,
+        categories: {}
+      },
+      entries: []
+    }
+  );
+}
+
+function mergeInventories(left, right) {
+  const entries = [...left.entries, ...right.entries];
+  const categories = {};
+  for (const entry of entries) {
+    categories[entry.category] = (categories[entry.category] ?? 0) + 1;
+  }
+  return {
+    ...left,
+    generated_at: new Date().toISOString(),
+    entries,
+    summary: {
+      paths: entries.length,
+      files: entries.filter((entry) => entry.kind === "file").length,
+      total_bytes: entries.reduce(
+        (sum, entry) => sum + (entry.kind === "file" ? entry.size ?? 0 : 0),
+        0
+      ),
+      unhashed_bytes: entries.reduce(
+        (sum, entry) =>
+          sum + (
+            entry.kind === "file" && entry.sha256 === null
+              ? entry.size ?? 0
+              : 0
+          ),
+        0
+      ),
+      categories
+    }
   };
 }
 
@@ -828,32 +919,11 @@ export async function initializeProject(target, options = {}) {
   if (await pathExists(path.join(root, ".assistant"))) {
     throw new Error("target is already initialized");
   }
-  const sourceImport = await importInitializationSources(
-    root,
-    options.sources ?? []
-  );
-  try {
-    const entries = await readdir(root);
-    if (entries.length === 0) return initializeBlankProject(root);
-    return initializeExistingProject(root, {
-      importedSources: sourceImport.imported,
-      restrictedBoundaries: sourceImport.restrictedBoundaries
-    });
-  } catch (error) {
-    for (const relative of sourceImport.imported.reverse()) {
-      const importedPath = path.join(root, ...relative.split("/"));
-      if (await pathExists(importedPath)) {
-        await rm(importedPath, { recursive: true, force: true });
-      }
-    }
-    for (const directory of sourceImport.createdDirectories.reverse()) {
-      if (!(await pathExists(directory))) continue;
-      try {
-        await rmdir(directory);
-      } catch (cleanupError) {
-        if (!["ENOTEMPTY", "ENOENT"].includes(cleanupError.code)) throw cleanupError;
-      }
-    }
-    throw error;
+  const entries = await readdir(root);
+  if (entries.length === 0 && (options.sources ?? []).length === 0) {
+    return initializeBlankProject(root);
   }
+  return initializeExistingProject(root, {
+    sources: options.sources ?? []
+  });
 }

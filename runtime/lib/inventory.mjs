@@ -23,8 +23,10 @@ const GENERATED_SEGMENTS = new Set([
 const DOCUMENT_EXTENSIONS = new Set([
   ".md",
   ".mdx",
+  ".odt",
   ".txt",
   ".rst",
+  ".rtf",
   ".pdf",
   ".doc",
   ".docx",

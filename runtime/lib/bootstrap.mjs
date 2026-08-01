@@ -155,8 +155,13 @@ async function updatePersistentBootstrapStatus(target, output) {
     (gap) => gap.blocking_level === "initialization"
   );
   const materialConflicts = output.conflicts.filter((conflict) => conflict.material);
+  const pendingDocumentAssets = (output.document_assets ?? []).filter(
+    (asset) => asset.decision_status === "pending"
+  );
   const status =
-    critical.length > 0 || materialConflicts.length > 0
+    critical.length > 0 ||
+    materialConflicts.length > 0 ||
+    pendingDocumentAssets.length > 0
       ? "awaiting_user_input"
       : "bootstrap_incomplete";
 
@@ -188,6 +193,7 @@ async function updatePersistentBootstrapStatus(target, output) {
 - Assistant operation not yet authorized: canonical execution based on this incomplete survey
 - Critical gap IDs: ${criticalIds.length > 0 ? criticalIds.map((id) => `\`${id}\``).join(", ") : "none"}
 - Material conflict IDs: ${conflictIds.length > 0 ? conflictIds.map((id) => `\`${id}\``).join(", ") : "none"}
+- Document relocation decisions: ${pendingDocumentAssets.length > 0 ? pendingDocumentAssets.map((asset) => `\`${asset.path}\``).join(", ") : "none"}
 - Candidate route: \`.assistant/internal/bootstrap/staging/\`
 - Last verified: \`${current.metadata.verified_at}\`
 
@@ -215,6 +221,9 @@ Human and non-assistant project work remain unaffected.
   state.closed_book_validated = false;
   state.critical_gap_ids = critical.map((gap) => gap.id);
   state.material_conflict_ids = materialConflicts.map((conflict) => conflict.id);
+  state.pending_document_asset_paths = pendingDocumentAssets.map(
+    (asset) => asset.path
+  );
   state.updated_at = new Date().toISOString();
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   return status;
@@ -719,7 +728,10 @@ export async function runSemanticBootstrap(target, options = {}) {
   );
 
   const evidence = await buildEvidencePacket(root, inventory, {
-    priorityPaths: sourceAuthority?.imported_paths ?? [],
+    priorityPaths:
+      sourceAuthority?.priority_paths ??
+      sourceAuthority?.imported_paths ??
+      [],
     boundaries
   });
   await writeUtf8(path.join(bootstrapRoot, "evidence-packet.txt"), evidence.packet);
@@ -1052,6 +1064,10 @@ directly requires a structural change. Do not invent evidence.`;
     ).length,
     conflicts: output.conflicts.length,
     material_conflicts: output.conflicts.filter((conflict) => conflict.material).length,
+    document_assets: (output.document_assets ?? []).length,
+    pending_document_decisions: (output.document_assets ?? []).filter(
+      (asset) => asset.decision_status === "pending"
+    ).length,
     candidate_nodes: output.candidate_nodes.length,
     tokens_used: runMetrics.tokens_used,
     resumed: Object.values(execution.metrics).some(
@@ -1148,7 +1164,10 @@ export async function recoverRejectedBootstrap(target, rejectionId) {
     ? JSON.parse(await readFile(sourceAuthorityPath, "utf8"))
     : null;
   const evidence = await buildEvidencePacket(root, inventory, {
-    priorityPaths: sourceAuthority?.imported_paths ?? []
+    priorityPaths:
+      sourceAuthority?.priority_paths ??
+      sourceAuthority?.imported_paths ??
+      []
   });
   if (evidence.metrics.priority_omitted_files > 0) {
     throw new Error(
@@ -1180,6 +1199,10 @@ export async function recoverRejectedBootstrap(target, rejectionId) {
     conflicts: output.conflicts.length,
     material_conflicts: output.conflicts.filter(
       (conflict) => conflict.material
+    ).length,
+    document_assets: (output.document_assets ?? []).length,
+    pending_document_decisions: (output.document_assets ?? []).filter(
+      (asset) => asset.decision_status === "pending"
     ).length,
     candidate_nodes: output.candidate_nodes.length,
     tokens_used: runMetrics.tokens_used,

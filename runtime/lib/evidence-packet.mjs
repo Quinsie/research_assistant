@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  DOCUMENT_EXTENSIONS,
+  extractDocumentRepresentation
+} from "./document-extractor.mjs";
 import { sha256 } from "./meta.mjs";
 
 const PLAIN_TEXT_EXTENSIONS = new Set([
@@ -98,7 +102,14 @@ export async function buildDiscoveryPacket(target, inventory, options = {}) {
   for (const entry of candidates) {
     if (includedBytes >= contentLimit) break;
     const absolute = path.join(root, ...entry.path.split("/"));
-    const content = await readFile(absolute, "utf8");
+    const extension = path.extname(entry.path).toLowerCase();
+    const extracted = DOCUMENT_EXTENSIONS.has(extension)
+      ? await extractDocumentRepresentation(absolute)
+      : null;
+    const content = extracted
+      ? extracted.text
+      : await readSafeUtf8(absolute);
+    if (content === null || content.length === 0) continue;
     const remaining = contentLimit - includedBytes;
     const represented = textExcerpt(content, Math.min(64 * 1024, remaining));
     const value = represented.content;
@@ -419,6 +430,7 @@ function batchSemanticUnits(units, limit = SEMANTIC_BATCH_LIMIT) {
       "",
       `path=${unit.path}; lines=${unit.line_start}-${unit.line_end}; bytes=${unit.bytes}; sha256=${unit.content_sha256}`,
       `role=${unit.role}; access_policy=${unit.access_policy}; control_roles=${unit.control_roles.join(",") || "none"}`,
+      `representation=${unit.representation}; extraction_status=${unit.extraction_status}; extraction_limitations=${unit.extraction_limitations.join("; ") || "none"}`,
       "",
       "```text",
       unit.content,
@@ -474,6 +486,7 @@ export async function buildSemanticEvidenceBatches(
     : [];
   const units = [];
   const artifacts = [];
+  const documentAssets = [];
   for (const entry of inventory.entries) {
     if (entry.kind !== "file") continue;
     const access = contentAccess(entry.path, boundaries);
@@ -506,9 +519,45 @@ export async function buildSemanticEvidenceBatches(
       continue;
     }
     const extension = path.extname(entry.path).toLowerCase();
+    const documentCandidate = entry.category === "document";
+    let documentExtraction = null;
+    if (documentCandidate) {
+      if (DOCUMENT_EXTENSIONS.has(extension)) {
+        documentExtraction = await extractDocumentRepresentation(
+          path.join(root, ...entry.path.split("/")),
+          options.documentExtraction ?? {}
+        );
+      } else if (PLAIN_TEXT_EXTENSIONS.has(extension)) {
+        documentExtraction = {
+          schema: "assistant.document-extraction/v1",
+          format: extension.slice(1) || "text",
+          status: "extracted",
+          representation: "utf8_text",
+          text: null,
+          limitations: []
+        };
+      }
+      if (!entry.path.startsWith(".assistant/vault/intake/")) {
+        documentAssets.push({
+          path: entry.path,
+          bytes: entry.size,
+          sha256: entry.sha256 ?? null,
+          format: documentExtraction?.format ?? extension.slice(1) ?? "unknown",
+          extraction_status: documentExtraction?.status ?? "unsupported",
+          representation: documentExtraction?.representation ?? "metadata_only",
+          limitations:
+            documentExtraction?.limitations ?? ["document format is unsupported"],
+          already_in_docs:
+            entry.path === "docs" || entry.path.startsWith("docs/")
+        });
+      }
+    }
     const semanticDocument =
       entry.category === "document" &&
-      PLAIN_TEXT_EXTENSIONS.has(extension);
+      (
+        PLAIN_TEXT_EXTENSIONS.has(extension) ||
+        DOCUMENT_EXTENSIONS.has(extension)
+      );
     const semanticConfig =
       entry.category === "config" &&
       PLAIN_TEXT_EXTENSIONS.has(extension);
@@ -587,6 +636,26 @@ export async function buildSemanticEvidenceBatches(
         });
         continue;
       }
+    } else if (
+      semanticDocument &&
+      documentExtraction &&
+      DOCUMENT_EXTENSIONS.has(extension)
+    ) {
+      content = documentExtraction.text;
+      if (!content) {
+        artifacts.push({
+          path: entry.path,
+          category: entry.category,
+          disposition: "extraction_gap",
+          reason: documentExtraction.limitations.join("; "),
+          extraction_status: documentExtraction.status,
+          representation: documentExtraction.representation
+        });
+        continue;
+      }
+      role = extension === ".xlsx"
+        ? "structured_document_representation"
+        : "document_content";
     } else {
       content = await readSafeUtf8(
         path.join(root, ...entry.path.split("/"))
@@ -614,6 +683,13 @@ export async function buildSemanticEvidenceBatches(
       units.push({
         ...unit,
         role,
+        representation:
+          documentExtraction?.representation ??
+          (source ? "deterministic_source_outline" : role),
+        extraction_status:
+          documentExtraction?.status ?? "not_applicable",
+        extraction_limitations:
+          documentExtraction?.limitations ?? [],
         access_policy: access,
         control_roles: controlRoles(unit.content)
       });
@@ -635,6 +711,8 @@ export async function buildSemanticEvidenceBatches(
           .map((unit) => unit.path)
       )
     ].sort((left, right) => left.localeCompare(right, "en")),
+    document_assets: documentAssets.sort((left, right) =>
+      left.path.localeCompare(right.path, "en")),
     units: units.map(({ content, ...unit }) => unit),
     artifacts,
     batches: batches.map(({ packet, ...batch }) => batch)

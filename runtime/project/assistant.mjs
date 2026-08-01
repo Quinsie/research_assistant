@@ -90,6 +90,12 @@ function humanResult(value) {
         `${semantic.gaps ?? 0} gaps, ${semantic.conflicts ?? 0} conflicts, ` +
         `${semantic.tokens_used ?? "unknown"} tokens.`
       );
+      if ((semantic.pending_document_decisions ?? 0) > 0) {
+        lines.push(
+          `${semantic.pending_document_decisions} document placement decision(s) ` +
+          "require one preview-first approval."
+        );
+      }
     }
     if (completion.readiness === "system_migration_required") {
       lines.push(
@@ -107,6 +113,12 @@ function humanResult(value) {
       );
     } else if (completion.next) {
       lines.push(`Next: ${completion.next}`);
+    }
+    if (["ready", "ready_with_gaps"].includes(status)) {
+      lines.push(
+        "docs/ is human-managed cold storage. Normal Assistant work does not " +
+        "inspect it; docs/report/ is the derived-report output interface."
+      );
     }
     return lines.join("\n");
   }

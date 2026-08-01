@@ -445,6 +445,33 @@ async function assertClosedBookReady(root, output) {
   const audit = output.closed_book_audit;
   const lineage = output.lineage;
   const unresolvedSurfaces = [];
+  const liveDocumentReferences = [];
+  const canonicalMeaning = (output.candidate_nodes ?? [])
+    .map((node) => [
+      node.title,
+      node.body,
+      ...(node.semantic_sections ?? []).flatMap((section) => [
+        section.heading,
+        section.content
+      ])
+    ].join("\n"))
+    .join("\n");
+  for (const asset of output.document_assets ?? []) {
+    if (
+      ["not_document_asset", "report_output"].includes(asset.proposed_action)
+    ) continue;
+    for (const candidatePath of [
+      asset.path,
+      asset.proposed_destination
+    ].filter(Boolean)) {
+      if (
+        canonicalMeaning.includes(candidatePath) ||
+        canonicalMeaning.includes(candidatePath.replaceAll("/", "\\"))
+      ) {
+        liveDocumentReferences.push(candidatePath);
+      }
+    }
+  }
   for (const surface of output.legacy_surfaces ?? []) {
     if (
       ["canonical_candidate", "competing_control_surface"].includes(
@@ -464,6 +491,34 @@ async function assertClosedBookReady(root, output) {
       continue;
     }
     if (surface.status === "resolved") {
+      if (surface.proposed_action === "integrate_then_cold") {
+        const normalized = surface.path.replaceAll("\\", "/");
+        const registryPath = path.join(
+          root,
+          ".assistant",
+          "internal",
+          "restricted",
+          "boundaries.json"
+        );
+        const boundaries = await pathExists(registryPath)
+          ? JSON.parse(await readFile(registryPath, "utf8")).boundaries ?? []
+          : [];
+        const protectedPath =
+          normalized === "docs" ||
+          normalized.startsWith("docs/") ||
+          boundaries.some((boundary) => {
+            const relative = boundary.relative.replaceAll("\\", "/");
+            return (
+              normalized === relative ||
+              (
+                boundary.boundary_kind === "directory" &&
+                normalized.startsWith(`${relative}/`)
+              )
+            );
+          });
+        if (!protectedPath) unresolvedSurfaces.push(surface.path);
+        continue;
+      }
       if (
         !["integrate_then_move", "integrate_then_remove"].includes(
           surface.proposed_action
@@ -494,7 +549,8 @@ async function assertClosedBookReady(root, output) {
     !audit?.decisions_explainable ||
     (audit?.live_legacy_dependencies ?? []).length > 0 ||
     (audit?.missing_concerns ?? []).length > 0 ||
-    unresolvedSurfaces.length > 0
+    unresolvedSurfaces.length > 0 ||
+    liveDocumentReferences.length > 0
   ) {
     throw new Error(
       "closed-book activation blocked: semantic lineage or legacy migration is incomplete"
@@ -760,9 +816,16 @@ export async function activateBootstrap(target) {
     (gap) => gap.blocking_level === "initialization"
   );
   const material = output.conflicts.filter((conflict) => conflict.material);
-  if (critical.length > 0 || material.length > 0) {
+  const pendingDocumentAssets = (output.document_assets ?? []).filter(
+    (asset) => asset.decision_status === "pending"
+  );
+  if (
+    critical.length > 0 ||
+    material.length > 0 ||
+    pendingDocumentAssets.length > 0
+  ) {
     throw new Error(
-      `activation blocked: critical_gaps=${critical.length}, material_conflicts=${material.length}`
+      `activation blocked: critical_gaps=${critical.length}, material_conflicts=${material.length}, document_decisions=${pendingDocumentAssets.length}`
     );
   }
   await assertClosedBookReady(root, output);
@@ -780,10 +843,12 @@ export async function activateBootstrap(target) {
     ? JSON.parse(await readFile(snapshotManifestPath, "utf8"))
     : { records: [] };
   const snapshotMap = new Map(
-    snapshotManifest.records.map((record) => [
-      record.original_path,
-      record.snapshot_id
-    ])
+    snapshotManifest.records
+      .filter((record) => typeof record.snapshot_id === "string")
+      .map((record) => [
+        record.original_path,
+        record.snapshot_id
+      ])
   );
   const timestamp = new Date().toISOString();
   const evidenceUnitMap = evidenceUnitsByTarget(output);

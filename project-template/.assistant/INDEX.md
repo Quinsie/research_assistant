@@ -11,4 +11,4 @@ Generated route view; canonical owners retain semantic authority.
 
 ## Restricted interfaces
 
-`docs/user/`, `docs/report/`, `.assistant/vault/`, project-specific restricted boundaries, and the grant ledger require the restricted gateway.
+`docs/`, `.assistant/vault/`, project-specific cold document boundaries, and the grant ledger require the restricted gateway. `docs/report/` is the only write interface for Assistant-generated human reports; it is not a readable fallback during normal work.

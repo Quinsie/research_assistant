@@ -18,6 +18,10 @@ import {
   sha256,
   zoneForPath
 } from "./restricted-common.mjs";
+import {
+  DOCUMENT_EXTENSIONS,
+  extractDocumentRepresentation
+} from "../lib/document-extractor.mjs";
 
 const projectRoot = normalizeProjectRoot(process.cwd());
 const MAX_READ_BYTES = 2 * 1024 * 1024;
@@ -50,7 +54,7 @@ const grantProperties = {
 
 const TOOLS = [
   tool("source_preflight", "Inspect metadata for an exact granted source path without reading content.", grantProperties, ["grant_token", "path"], true),
-  tool("source_read_file", "Read one text file inside an exact granted source boundary.", grantProperties, ["grant_token", "path"], true),
+  tool("source_read_file", "Read one safely represented file inside an exact granted document boundary.", grantProperties, ["grant_token", "path"], true),
   tool("source_inventory_directory", "Inventory an exact granted source directory recursively without reading content.", grantProperties, ["grant_token", "path"], true),
   tool("source_snapshot", "Preserve one granted source file in the immutable assistant vault.", grantProperties, ["grant_token", "path"]),
   tool("report_write_new", "Create a new non-authoritative report without overwrite.", {
@@ -124,6 +128,27 @@ async function sourcePreflight(args) {
 }
 
 async function sourceReadFile(args) {
+  const { grant, absolute } = await authorizeGrant(args, "source_read_file");
+  const facts = await fileFacts(absolute);
+  if (!facts.is_file) throw new Error("requested path is not a file");
+  const extension = path.extname(absolute).toLowerCase();
+  if (DOCUMENT_EXTENSIONS.has(extension)) {
+    const extracted = await extractDocumentRepresentation(absolute, {
+      limits: { outputBytes: MAX_READ_BYTES }
+    });
+    await audit("source_read_file", {
+      grant_id: grant.grant_id,
+      path: absolute,
+      bytes: facts.bytes,
+      extraction_status: extracted.status,
+      representation: extracted.representation
+    });
+    return textResult({
+      path: absolute,
+      bytes: facts.bytes,
+      ...extracted
+    });
+  }
   const read = await readGrantedFile(args, "source_read_file");
   return textResult({
     path: read.absolute,

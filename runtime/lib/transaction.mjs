@@ -52,7 +52,7 @@ async function restrictedRelatives(root) {
 
 function assertSourceIndependent(content, relative, dynamicRelatives) {
   const normalized = content.replaceAll("\\", "/").toLowerCase();
-  const forbidden = ["docs/user", "docs/report", ...dynamicRelatives];
+  const forbidden = ["docs", ...dynamicRelatives];
   const liveReference = forbidden.find((candidate) =>
     normalized.includes(candidate)
   );

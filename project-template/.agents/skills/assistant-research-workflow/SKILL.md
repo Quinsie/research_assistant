@@ -9,9 +9,10 @@ Use this skill only for durable research meaning. A short answer or transient
 analysis does not require a canonical node.
 
 1. Read `.assistant/INDEX.md` and `.assistant/CURRENT.md`.
-2. Resolve only the task-relevant route and policy. Do not inspect
-   `docs/user/`, `docs/report/`, or `.assistant/vault/` without a current
-   gateway grant.
+2. Resolve only the task-relevant route and policy. Do not inspect `docs/`, an
+   external cold document boundary, or `.assistant/vault/` without a current
+   exact-path gateway grant. `docs/report/` is write-only except when the user
+   names an exact report for review, edit, or comparison.
 3. Read `.assistant/system/research-schema.md` completely.
 4. Identify whether the instruction adds, refines, conflicts with, or
    supersedes active canonical meaning.
@@ -114,6 +115,11 @@ The completion command validates that one managed block remains, competing
 control routes are gone, and accepted AGENTS/POLICY plus the original are
 archived. It does not decide rule meaning for the user.
 
+This migration changes only the active AGENTS/POLICY control route. Do not
+move, delete, rename, or archive documents referenced by legacy AGENTS. The
+subsequent semantic bootstrap must first integrate their meaning and then
+present any document relocation as a separate reversible whole-plan proposal.
+
 After every pending system migration is complete, continue the same bootstrap
 with `.assistant\system\assistant.cmd init --json` on Windows or
 `.assistant/system/assistant init --json` on POSIX. The installed runner uses
@@ -131,17 +137,30 @@ project. A valid node count alone is not readiness.
 
 Review every staged `legacy_surfaces` entry by observed meaning. Preserve
 repository-native build/test instructions, user sources, reports, and ordinary
-project documents in their appropriate role. For a competing control surface,
-preview the proposed preserve/rewrite/move/remove action and obtain the user's
-approval before changing it. Do not invent a generic archive directory. If an
-approved action is `integrate_then_move` or `integrate_then_remove`, apply it
-before resolution; activation deterministically refuses a still-present live
-path.
+project documents in their appropriate role. `integrate_then_cold` means the
+meaning is canonical and the original is protected from normal Assistant
+access; it does not require deletion or movement. For a competing control
+surface, preview the proposed preserve/rewrite/move/remove action and obtain
+the user's approval before changing it. Do not invent a generic archive
+directory.
+
+Review every staged `document_assets` item. Show one whole relocation preview:
+the current path, observed role, canonical targets, proposed destination or
+cold-in-place disposition, reason, and rollback conditions. Explain that
+`docs/` is human-managed cold storage and `docs/report/` is the only report
+write interface. Ask once whether to apply the complete proposal. The user may
+change any disposition or destination. Do not move a file before the complete
+semantic output validates, and never overwrite a collision. In the resolved
+output, approved `move_to_docs` and `cold_in_place` items use
+`decision_status: approved`; rejected or ambiguous items must be changed to a
+fully decided non-pending disposition.
 
 After all answers are explicit, create one temporary
 `assistant.bootstrap-resolution/v1` JSON package. It must contain:
 
 - one decision for every active initialization gap and material conflict;
+- one `document_asset` decision keyed by exact path for every pending document
+  placement item;
 - each decision's affected candidate IDs;
 - a complete `resolved_output` that preserves unaffected candidate meaning and
   inventory and semantic-unit coverage;
@@ -154,10 +173,12 @@ user confirms the whole change, run:
 
 `.assistant\system\assistant.cmd bootstrap-resolve --input <exact-json-path> --confirm --json`
 
-For gap-only resolution, omit `--confirm`. Never delete or downgrade a blocker
-without recording its answer in the package. The command validates declared
-changes, activates canonical knowledge atomically, performs boundedness
-maintenance, validates closed-book state, and reports environment readiness.
+For gap-only resolution with no material conflict or document placement, omit
+`--confirm`. Never delete or downgrade a blocker without recording its answer
+in the package. The command validates declared changes, applies the approved
+relocation and cold-boundary ledger transaction, activates canonical knowledge
+atomically, performs boundedness maintenance, validates closed-book state, and
+reports environment readiness.
 
 After successful activation, run
 `.assistant\system\assistant.cmd bootstrap-deferred --claim --json`. Tell the user

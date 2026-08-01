@@ -58,7 +58,8 @@ export function extractRestrictedCandidates(prompt, projectRoot) {
   const patterns = [
     /"([^"\r\n]+)"/gu,
     /'([^'\r\n]+)'/gu,
-    /(?:[A-Za-z]:[\\/][^\r\n"'<>|?*]+|(?:\.{0,2}[\\/])?(?:docs[\\/]user|docs[\\/]report|\.assistant[\\/]vault)(?:[\\/][^\s"'<>|?*]+)*)/gu
+    /(?:[A-Za-z]:[\\/][^\r\n"'<>|?*]+|(?:\.{0,2}[\\/])?(?:docs|\.assistant[\\/]vault)(?:[\\/][^\s"'<>|?*]+)*)/gu,
+    /(?:\.{0,2}[\\/])?[^\s"'<>|?*]+[\\/][^\s"'<>|?*]+/gu
   ];
   for (const pattern of patterns) {
     for (const match of prompt.matchAll(pattern)) {

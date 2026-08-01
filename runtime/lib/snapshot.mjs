@@ -17,14 +17,18 @@ function hashFile(filePath) {
 function isBootstrapRestrictedPath(relative) {
   const normalized = relative.replaceAll("\\", "/");
   return (
-    normalized.startsWith("docs/user/") ||
-    normalized.startsWith("docs/report/")
+    normalized === "docs" ||
+    normalized.startsWith("docs/") ||
+    normalized.startsWith(".assistant/vault/intake/")
   );
 }
 
 export async function snapshotBootstrapRestrictedInputs(target, inventory) {
   const root = path.resolve(target);
   const records = [];
+  const perFileLimit = 64 * 1024 * 1024;
+  const totalLimit = 256 * 1024 * 1024;
+  let copiedBytes = 0;
   for (const entry of inventory.entries) {
     if (entry.kind !== "file" || !isBootstrapRestrictedPath(entry.path)) {
       continue;
@@ -32,6 +36,24 @@ export async function snapshotBootstrapRestrictedInputs(target, inventory) {
     const source = path.join(root, ...entry.path.split("/"));
     const hash = entry.sha256 ?? await hashFile(source);
     const snapshotId = `snapshot:sha256:${hash}`;
+    const explicitIntake = entry.path.startsWith(".assistant/vault/intake/");
+    if (
+      !explicitIntake &&
+      (entry.size > perFileLimit || copiedBytes + entry.size > totalLimit)
+    ) {
+      records.push({
+        original_path: entry.path,
+        snapshot_id: null,
+        sha256: hash,
+        size: entry.size,
+        status: "not_snapshotted",
+        reason:
+          entry.size > perFileLimit
+            ? "per_file_snapshot_limit"
+            : "total_snapshot_limit"
+      });
+      continue;
+    }
     const destination = path.join(
       root,
       ".assistant",
@@ -53,8 +75,10 @@ export async function snapshotBootstrapRestrictedInputs(target, inventory) {
       original_path: entry.path,
       snapshot_id: snapshotId,
       sha256: hash,
-      size: entry.size
+      size: entry.size,
+      status: "preserved"
     });
+    copiedBytes += entry.size;
   }
 
   const manifest = {

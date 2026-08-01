@@ -11,10 +11,12 @@ changing, running, testing, or shipping the project.
 1. Read `.assistant/INDEX.md` and `.assistant/CURRENT.md` before work that needs
    project context.
 2. Follow only the task-relevant canonical and policy routes.
-3. Never access `docs/user/`, `docs/report/`, `.assistant/vault/`, or a
-   project-specific restricted boundary directly. Use the installed restricted
-   gateway and only the exact path and purpose authorized by the current user
-   instruction.
+3. Never list, search, read, or use `docs/`, `.assistant/vault/`, or a
+   project-specific cold document boundary directly. Use the installed
+   restricted gateway and only the exact path and purpose authorized by the
+   current user instruction. The sole write exception is creation of a new
+   derived report under `docs/report/`; reports never become canonical
+   authority.
 4. Resolve the relevant effective policy before writes, Git, network, reports,
    source access, external actions, or destructive actions.
 5. Persist material decisions, results, blockers, authorization, and current
@@ -63,4 +65,9 @@ changing, running, testing, or shipping the project.
     competing legacy control-surface migration remains incomplete. Normal
     work after activation must use canonical routes instead of reopening a
     live legacy master document as fallback authority.
+15. During existing-project initialization, discover human documentation
+    project-wide by content and role rather than assuming a directory or
+    filename. Integrate its durable meaning before proposing one reversible
+    relocation transaction. After activation, use canonical knowledge instead
+    of reopening the original documents.
 <!-- assistant-managed:end -->

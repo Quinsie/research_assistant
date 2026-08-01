@@ -24,7 +24,7 @@ export async function inspectPendingMigrations(target) {
       staged_path: ".assistant/internal/pending/agents-control-plane.json",
       competing_control_paths: record.competing_control_paths ?? [],
       action:
-        "review the original AGENTS backup; preserve repository-native rules, migrate durable assistant policy to .assistant/POLICY.md as intended, remove competing canonical routes, then confirm completion"
+        "review the original AGENTS backup; preserve repository-native rules, migrate durable assistant policy to .assistant/POLICY.md as intended, rewrite only competing live AGENTS routes to the Assistant control plane, and leave referenced project documents in place for the later semantic bootstrap and document-placement proposal"
     });
   }
   const configPath = path.join(pendingRoot, "assistant-config.toml");
@@ -83,10 +83,12 @@ export async function markPendingMigrationRequired(target, migrations) {
 - Next safe route: run the migration status command, review each staged/active difference, and obtain explicit confirmation
 - Last verified: \`${timestamp}\`
 
-Semantic survey output is staged, but competing system control assets must be
-resolved before activation. Preserve user-owned rules and files until the
-confirmed migration records their intended owner. This does not block human or
-non-assistant project work.
+Semantic survey output is not active and may not have run yet. Competing system
+control assets must be resolved before semantic bootstrap continues. Preserve
+user-owned rules and every referenced project document in place; this migration
+rewrites only the live AGENTS control route. Document meaning, cold boundaries,
+and optional relocation are handled later by the semantic bootstrap. This does
+not block human or non-assistant project work.
 `
     )
   );
