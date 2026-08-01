@@ -1,0 +1,10 @@
+{
+  "schema": "assistant.manifest/v1",
+  "project_id": "{{PROJECT_ID}}",
+  "profile": "research",
+  "system_version": "0.1.0-dev",
+  "initialized_at": "{{TIMESTAMP}}",
+  "initialization_status": "ready",
+  "activity_status": "awaiting_direction",
+  "project_locale": null
+}

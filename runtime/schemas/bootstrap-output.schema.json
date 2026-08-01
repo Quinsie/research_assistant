@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assistant existing-project bootstrap output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "project_summary",
+    "candidate_nodes",
+    "coverage_groups",
+    "gaps",
+    "conflicts"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "assistant.bootstrap-output/v1"
+    },
+    "project_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "scope",
+        "current_state",
+        "current_authorization",
+        "authorization_state",
+        "authorized_work",
+        "blocked_work",
+        "authorization_basis_paths",
+        "next_safe_route"
+      ],
+      "properties": {
+        "purpose": { "type": ["string", "null"] },
+        "scope": { "type": ["string", "null"] },
+        "current_state": { "type": ["string", "null"] },
+        "current_authorization": { "type": ["string", "null"] },
+        "authorization_state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "parallel_allowed",
+            "blocked",
+            "not_authorized",
+            "completed",
+            "superseded"
+          ]
+        },
+        "authorized_work": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "blocked_work": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "authorization_basis_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next_safe_route": { "type": ["string", "null"] }
+      }
+    },
+    "candidate_nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type",
+          "status",
+          "authority",
+          "certainty",
+          "relations",
+          "title",
+          "body",
+          "semantic_sections",
+          "evidence_paths",
+          "legacy_aliases"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_-]{2,63}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "foundation",
+              "plan",
+              "question",
+              "hypothesis",
+              "experiment",
+              "evidence",
+              "literature",
+              "dataset",
+              "decision",
+              "issue",
+              "risk",
+              "history",
+              "environment",
+              "work",
+              "requirement",
+              "design",
+              "task",
+              "test",
+              "release"
+            ]
+          },
+          "status": { "type": "string", "minLength": 1 },
+          "authority": {
+            "type": "string",
+            "enum": [
+              "canonical_user_approved",
+              "canonical_agent",
+              "candidate_unintegrated"
+            ]
+          },
+          "certainty": {
+            "type": "string",
+            "enum": ["direct", "mixed", "inferred"]
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "target"],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "contains",
+                    "routes_to",
+                    "depends_on",
+                    "derived_from",
+                    "supports",
+                    "challenges",
+                    "tests",
+                    "produces",
+                    "resolves",
+                    "supersedes",
+                    "blocked_by",
+                    "authorizes",
+                    "implements",
+                    "verifies",
+                    "precedes",
+                    "follows",
+                    "aliases"
+                  ]
+                },
+                "target": { "type": "string" }
+              }
+            }
+          },
+          "title": { "type": "string", "minLength": 1 },
+          "body": { "type": "string", "minLength": 1 },
+          "semantic_sections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["heading", "content"],
+              "properties": {
+                "heading": { "type": "string", "minLength": 1 },
+                "content": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "evidence_paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "legacy_aliases": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "coverage_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["selector_kind", "selector", "disposition", "reason"],
+        "properties": {
+          "selector_kind": {
+            "type": "string",
+            "enum": ["exact_path", "path_prefix", "inventory_category"]
+          },
+          "selector": { "type": "string", "minLength": 1 },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "preserved",
+              "consolidated",
+              "historical",
+              "superseded",
+              "omitted_with_reason",
+              "nonsemantic_inventory_only"
+            ]
+          },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "question",
+          "critical",
+          "blocking_level",
+          "safe_unknown_state",
+          "unsafe_reason",
+          "reason",
+          "affected_concerns"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "question": { "type": "string" },
+          "critical": { "type": "boolean" },
+          "blocking_level": {
+            "type": "string",
+            "enum": ["initialization", "workstream", "nonblocking"]
+          },
+          "safe_unknown_state": { "type": "boolean" },
+          "unsafe_reason": { "type": ["string", "null"] },
+          "reason": { "type": "string" },
+          "affected_concerns": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "material",
+          "concern",
+          "left",
+          "right",
+          "left_conditions",
+          "right_conditions",
+          "reconcilability",
+          "why_not_conditionable",
+          "evidence_paths",
+          "decision_needed"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "material": { "type": "boolean" },
+          "concern": { "type": "string" },
+          "left": { "type": "string" },
+          "right": { "type": "string" },
+          "left_conditions": { "type": "string" },
+          "right_conditions": { "type": "string" },
+          "reconcilability": {
+            "type": "string",
+            "enum": [
+              "conditioned_compatible",
+              "nonmaterial_ambiguity",
+              "unresolved_material"
+            ]
+          },
+          "why_not_conditionable": { "type": ["string", "null"] },
+          "evidence_paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "decision_needed": { "type": "string" }
+        }
+      }
+    }
+  }
+}

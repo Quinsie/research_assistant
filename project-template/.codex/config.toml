@@ -1,0 +1,47 @@
+default_permissions = "assistant_project"
+
+[permissions.assistant_project]
+description = "Project work with assistant source and report zones denied."
+extends = ":workspace"
+
+[permissions.assistant_project.filesystem.":workspace_roots"]
+"docs/user" = "deny"
+"docs/report" = "deny"
+".assistant/vault" = "deny"
+".assistant/internal/restricted" = "deny"
+{{ADDITIONAL_RESTRICTED_TOML}}
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = {{HOOK_COMMAND_TOML}}
+command_windows = {{HOOK_COMMAND_TOML}}
+timeout = 10
+additionalContextLimit = 600
+
+[mcp_servers.assistant_restricted]
+command = {{NODE_EXECUTABLE_TOML}}
+args = [{{GATEWAY_SCRIPT_TOML}}]
+cwd = {{PROJECT_ROOT_TOML}}
+required = true
+default_tools_approval_mode = "writes"
+enabled_tools = [
+  "source_preflight",
+  "source_read_file",
+  "source_inventory_directory",
+  "source_snapshot",
+  "report_write_new",
+  "report_read_exact",
+  "report_edit_exact",
+  "vault_verify"
+]
+
+[mcp_servers.assistant_restricted.tools.source_snapshot]
+approval_mode = "auto"
+
+[mcp_servers.assistant_restricted.tools.report_write_new]
+approval_mode = "auto"
+
+[mcp_servers.assistant_restricted.tools.report_edit_exact]
+approval_mode = "auto"

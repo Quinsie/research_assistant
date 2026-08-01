@@ -1,0 +1,11 @@
+{
+  "schema": "assistant.contract/v1",
+  "node_schema": "assistant.node/v1",
+  "manifest_schema": "assistant.manifest/v1",
+  "metadata_envelope": "assistant-meta-json-comment",
+  "restricted_zones": [
+    "docs/user",
+    "docs/report",
+    ".assistant/vault"
+  ]
+}

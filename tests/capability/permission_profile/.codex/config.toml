@@ -1,0 +1,10 @@
+default_permissions = "assistant_test"
+
+[permissions.assistant_test]
+description = "Workspace editing with restricted assistant data zones."
+extends = ":workspace"
+
+[permissions.assistant_test.filesystem.":workspace_roots"]
+"docs/user" = "deny"
+"docs/report" = "deny"
+".assistant/vault" = "deny"

@@ -1,0 +1,138 @@
+---
+name: assistant-research-workflow
+description: Create or update durable research questions, hypotheses, literature, experiments, evidence, controls, dispositions, claim boundaries, work episodes, and reports in an installed Assistant project.
+---
+
+# Research workflow
+
+Use this skill only for durable research meaning. A short answer or transient
+analysis does not require a canonical node.
+
+1. Read `.assistant/INDEX.md` and `.assistant/CURRENT.md`.
+2. Resolve only the task-relevant route and policy. Do not inspect
+   `docs/user/`, `docs/report/`, or `.assistant/vault/` without a current
+   gateway grant.
+3. Read `.assistant/system/research-schema.md` completely.
+4. Identify whether the instruction adds, refines, conflicts with, or
+   supersedes active canonical meaning.
+5. If it materially conflicts with north star, scope, plan, state,
+   authorization, active work, gate, disposition, or methodology, stage the
+   whole change and ask before changing active owners.
+6. Otherwise update the smallest canonical owner. Preserve stable IDs and typed
+   relations. Never copy detailed results into a parent; parents route and
+   summarize status only.
+7. Create a new owner when durable meaning first appears. Start related small
+   records in a bounded collection. Promote a record without changing its ID
+   when it gains an independent lifecycle, selective routing need, or makes the
+   owner exceed its boundedness warning.
+8. Record unknown or unverified fields explicitly. Do not invent values.
+9. Update `CURRENT.md` only for current state, authorization, blocker, active
+   work, current decision, and next safe route.
+10. Run `.assistant\system\assistant.cmd validate` after material changes. If
+    boundedness warns, run `.assistant\system\assistant.cmd structure` for a
+    preview and then `structure --apply`; validate again.
+
+Canonical state must be current before a terminal report is generated.
+
+## Work episode and report
+
+- When a new prompt changes active-work priority, state, or next action, give
+  concise transition feedback. Distinguish a short question then resume,
+  additive instruction, explicit stop/replace, material conflict, and unrelated
+  substantial work. If priority is genuinely unspecified, ask whether to
+  pause, replace, or run in parallel; do not silently abandon or resume work.
+- Do not create a durable Goal for a short answer or trivial maintenance task.
+- For continuing work, preserve its ID, authority, scope, status, stop
+  condition, current state, lineage, decision requirement, and report linkage.
+- At a material result, blocker, decision, authorization, plan, or state
+  change, update canonical owners promptly instead of waiting for the report.
+- Stop before downstream work at a Gate, anomaly, material problem, user stop,
+  or required branch decision.
+- A terminal report is generated only after canonical state is current. Use the
+  project locale in `.assistant/manifest.json`; if it is not set, follow the
+  first-prompt locale instruction before reporting.
+- One terminal episode has at most one idempotent report. Include without
+  repetition: Goal and authority, Why, work actually done and excluded, method
+  and evidence basis, factual results, interpretation and non-claims,
+  limitations and uncertainty, resulting state and authorization, exact
+  decision required, next paths, and traceability.
+- A requested report is created only on explicit request from current
+  canonical state and artifacts. Never use an older report as its source.
+
+## Exact source integration
+
+Use this workflow only when the current instruction both identifies an exact
+source boundary and requests canonical integration. Review, summary, critique,
+or comparison alone must not update canonical state.
+
+1. Use only the current prompt grant. For a directory, inventory the whole
+   granted boundary and account every entry; do not follow a link outside it.
+2. Preflight each file. Read supported text through the gateway and preserve
+   exact bytes with `source_snapshot`. Binary or oversized content that cannot
+   be interpreted is a documented coverage gap, not silently integrated.
+3. Map every meaningful source section to one of `preserved`, `consolidated`,
+   `historical`, `superseded`, or `omitted_with_reason`. Preserve definitions,
+   formulas, variables, conditions, numbers, claims, evidence, controls,
+   falsification/stop conditions, plans, gates, results, limitations,
+   decisions, authorization, and plan evolution when present.
+4. Compare against routed canonical owners. Classify additions, refinements,
+   conflicts, supersessions, and history. Never use filename, date, mtime, Git
+   state, or words such as "latest" as authority.
+5. Create one `source_integration` transaction specification containing all
+   affected writes, immutable `source_snapshot_ids`, section `coverage`, and
+   all conflicts. Canonical text may cite snapshot identities but must not cite
+   the live source path.
+6. If any conflict is material, preview the whole conflict and wait for
+   explicit confirmation. Do not commit a non-conflicting subset.
+7. Commit the transaction, run structure maintenance if signaled, then
+   validate. Re-route from canonical owners without reading the source,
+   reports, or vault; failure is a documentation gap and the integration is
+   not complete.
+
+## Existing-project bootstrap resolution
+
+When `CURRENT.md` names `BOOTSTRAP-EXISTING` and `awaiting_user_input`, normal
+project work is blocked. Read only the listed gap/conflict records and staged
+candidates. Ask at most three related questions at a time.
+
+If migration status lists `agents_control_plane`, resolve it before semantic
+gap/conflict questions. Read the preserved original AGENTS backup and the
+active AGENTS file. Keep repository-native build, test, safety, and subtree
+rules in AGENTS. Move durable assistant side-effect preferences such as
+commit/report/network behavior into `.assistant/POLICY.md` when the user wants
+them retained. Remove or rewrite legacy INDEX/CURRENT/PLAN/POLICY routes that
+compete with `.assistant`; do not delete rules merely because they are old.
+Preview material rule changes and obtain explicit confirmation, then run:
+
+`.assistant\system\assistant.cmd migration --complete-agents --confirm`
+
+The completion command validates that one managed block remains, competing
+control routes are gone, and accepted AGENTS/POLICY plus the original are
+archived. It does not decide rule meaning for the user.
+
+After all answers are explicit, create one temporary
+`assistant.bootstrap-resolution/v1` JSON package. It must contain:
+
+- one decision for every active initialization gap and material conflict;
+- each decision's affected candidate IDs;
+- a complete `resolved_output` that preserves unaffected candidate meaning and
+  inventory coverage;
+- a `canonical_user_approved` decision candidate for every material conflict.
+
+Preview the package to the user when any material conflict exists. After the
+user confirms the whole change, run:
+
+`.assistant\system\assistant.cmd bootstrap-resolve --input <exact-json-path> --confirm`
+
+For gap-only resolution, omit `--confirm`. Never delete or downgrade a blocker
+without recording its answer in the package. The command validates declared
+changes, activates canonical knowledge atomically, performs boundedness
+maintenance, validates closed-book state, and reports environment readiness.
+
+After successful activation, run
+`.assistant\system\assistant.cmd bootstrap-deferred --claim`. Tell the user
+that initialization is resolved and that you are returning to the original
+request, then perform that request under the newly active canonical state.
+After its durable state is safely recorded, run
+`.assistant\system\assistant.cmd bootstrap-deferred --complete`. A new session
+may reclaim an `in_progress` request; do not rely on chat history alone.
