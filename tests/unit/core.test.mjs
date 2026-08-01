@@ -2880,18 +2880,23 @@ test("installed runtime validates itself and doctor separates unprobed sandbox",
       doctor.checks.find((item) => item.id === "direct_restricted_deny").status,
       "not_probed"
     );
+    const windows = process.platform === "win32";
     const launcher = path.join(
       target,
       ".assistant",
       "system",
-      "assistant.cmd"
+      windows ? "assistant.cmd" : "assistant"
     );
     const local = await import("node:child_process").then(({ spawnSync }) =>
-      spawnSync("cmd.exe", ["/d", "/c", launcher, "validate"], {
-        cwd: target,
-        encoding: "utf8",
-        windowsHide: true
-      })
+      spawnSync(
+        windows ? "cmd.exe" : launcher,
+        windows ? ["/d", "/c", launcher, "validate"] : ["validate"],
+        {
+          cwd: target,
+          encoding: "utf8",
+          windowsHide: true
+        }
+      )
     );
     assert.equal(local.status, 0, local.stderr);
     assert.equal(JSON.parse(local.stdout).valid, true);

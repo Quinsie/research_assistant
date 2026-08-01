@@ -8,14 +8,19 @@ import { fileURLToPath } from "node:url";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(testDirectory, "..", "..");
-const launcher = path.join(packageRoot, "assistant.cmd");
+const windows = process.platform === "win32";
+const launcher = path.join(packageRoot, windows ? "assistant.cmd" : "assistant");
 
 function runLauncher(args) {
-  const result = spawnSync("cmd.exe", ["/d", "/c", launcher, ...args], {
+  const result = spawnSync(
+    windows ? "cmd.exe" : launcher,
+    windows ? ["/d", "/c", launcher, ...args] : args,
+    {
     cwd: packageRoot,
     encoding: "utf8",
     windowsHide: true
-  });
+    }
+  );
   assert.equal(
     result.status,
     0,
@@ -24,7 +29,7 @@ function runLauncher(args) {
   return JSON.parse(result.stdout);
 }
 
-test("Windows cmd launcher supports init, validate, route, and policy", async () => {
+test("platform launcher supports init, validate, route, and policy", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-cli-"));
   const target = path.join(tempRoot, "project with spaces");
   try {
