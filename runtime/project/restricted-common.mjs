@@ -8,8 +8,8 @@ export const LEDGER_RELATIVE = ".assistant/internal/restricted/grants.jsonl";
 export const BOUNDARIES_RELATIVE =
   ".assistant/internal/restricted/boundaries.json";
 export const RESTRICTED_ZONES = Object.freeze([
-  { relative: "docs/user", kind: "source" },
-  { relative: "docs/report", kind: "report" },
+  { relative: "docs/report", kind: "report", boundary_kind: "directory" },
+  { relative: "docs", kind: "document", boundary_kind: "directory" },
   { relative: ".assistant/vault", kind: "vault" }
 ]);
 
@@ -48,7 +48,7 @@ function configuredZones(projectRoot) {
     if (
       typeof boundary.relative !== "string" ||
       boundary.relative.length === 0 ||
-      !["source", "report", "vault"].includes(boundary.kind) ||
+      !["source", "document", "report", "vault"].includes(boundary.kind) ||
       !["file", "directory"].includes(boundary.boundary_kind)
     ) {
       throw new Error("restricted boundary registry contains an invalid entry");
@@ -72,13 +72,18 @@ function configuredZones(projectRoot) {
 
 export function zoneForPath(projectRoot, candidate) {
   const absolute = path.resolve(candidate);
-  for (const zone of configuredZones(projectRoot)) {
-    const root = path.resolve(projectRoot, ...zone.relative.split("/"));
+  const zones = configuredZones(projectRoot)
+    .map((zone) => ({
+      ...zone,
+      root: path.resolve(projectRoot, ...zone.relative.split("/"))
+    }))
+    .sort((left, right) => right.root.length - left.root.length);
+  for (const zone of zones) {
     const matches =
       zone.boundary_kind === "file"
-        ? root === absolute
-        : isInside(root, absolute);
-    if (matches) return { ...zone, root, absolute };
+        ? zone.root === absolute
+        : isInside(zone.root, absolute);
+    if (matches) return { ...zone, absolute };
   }
   return null;
 }
@@ -101,7 +106,7 @@ export async function resolveExistingBoundary(projectRoot, candidate) {
 }
 
 export function defaultOperations(zone, prompt) {
-  if (zone === "source") {
+  if (zone === "source" || zone === "document") {
     return [
       "source_preflight",
       "source_read_file",

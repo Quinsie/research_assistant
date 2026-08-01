@@ -18,6 +18,11 @@ import {
   enforceWindowsRestrictedAcls,
   rollbackWindowsRestrictedAcls
 } from "./windows-acl.mjs";
+import {
+  hasCommittedRelocations,
+  previewRelocationRestore,
+  restoreRelocations
+} from "./relocation.mjs";
 
 const MANAGED_START = "<!-- assistant-managed:start -->";
 const MANAGED_END = "<!-- assistant-managed:end -->";
@@ -192,7 +197,7 @@ async function inspectAssetConflict(root, asset) {
     : `${asset.path} changed after assistant installation`;
 }
 
-async function buildRemovalPreview(root, mode) {
+async function buildRemovalPreview(root, mode, layout = null) {
   if (!(await pathExists(path.join(root, ".assistant")))) {
     throw new Error("target is not initialized");
   }
@@ -227,11 +232,19 @@ async function buildRemovalPreview(root, mode) {
   ].filter(Boolean);
   const preserve = [
     "all project code, data, config, and Git history",
-    "docs/ including docs/user and docs/report",
+    "docs/ including the docs/report derived-report interface",
     ...(mode === "uninstall"
       ? [".assistant canonical knowledge, POLICY.md, vault, and protection ledger"]
       : [])
   ];
+  const relocationRestore = await previewRelocationRestore(root);
+  const relocationsPending = await hasCommittedRelocations(root);
+  if (
+    layout !== null &&
+    !["keep", "restore"].includes(layout)
+  ) {
+    conflicts.push(`invalid relocation layout choice: ${layout}`);
+  }
   return {
     schema: "assistant.lifecycle-preview/v1",
     target: root,
@@ -241,6 +254,9 @@ async function buildRemovalPreview(root, mode) {
     remove,
     preserve,
     conflicts,
+    relocation_layout: layout,
+    relocation_restore: relocationRestore,
+    relocation_choice_required: relocationsPending && layout === null,
     requires_confirmation: true
   };
 }
@@ -309,7 +325,7 @@ async function backupAssistantState(root) {
   return { temporary, records: [] };
 }
 
-async function captureRollbackPaths(root, ledger, backup) {
+async function captureRollbackPaths(root, ledger, backup, preview = null) {
   const candidates = [
     path.join(root, ".assistant"),
     path.join(root, "AGENTS.md"),
@@ -319,7 +335,11 @@ async function captureRollbackPaths(root, ledger, backup) {
     ledger.assets?.skill?.path
       ? ownedLocation(root, ledger.assets.skill.path)
       : null,
-    await currentGitExclude(root)
+    await currentGitExclude(root),
+    ...(preview?.relocation_restore?.assets ?? []).flatMap((asset) => [
+      path.resolve(root, ...asset.original_path.split("/")),
+      path.resolve(root, ...asset.destination_path.split("/"))
+    ])
   ].filter(Boolean);
   let index = 0;
   for (const location of [...new Set(candidates)]) {
@@ -374,9 +394,15 @@ async function restoreRollbackPaths(root, ledger, backup) {
 async function executeRemoval(root, mode, preview) {
   const ledger = await readInstallationLedger(root);
   const backup = await backupAssistantState(root);
-  await captureRollbackPaths(root, ledger, backup);
+  await captureRollbackPaths(root, ledger, backup, preview);
   let aclTouched = false;
   try {
+    if (preview.relocation_layout === "restore") {
+      const restored = await restoreRelocations(root, { confirmed: true });
+      if (restored.status !== "completed" && restored.assets?.length > 0) {
+        throw new Error("relocation restore did not complete");
+      }
+    }
     await removeManagedAgents(root, ledger);
     await removeManagedExclude(root, ledger);
     await removeCreatedAsset(root, ledger.assets?.codex_config);
@@ -418,15 +444,23 @@ async function executeRemoval(root, mode, preview) {
 
 export async function uninstallAssistant(target, options = {}) {
   const root = path.resolve(target);
-  const preview = await buildRemovalPreview(root, "uninstall");
-  if (!options.confirmed || preview.conflicts.length > 0) return preview;
+  const preview = await buildRemovalPreview(root, "uninstall", options.layout ?? null);
+  if (
+    !options.confirmed ||
+    preview.conflicts.length > 0 ||
+    preview.relocation_choice_required
+  ) return preview;
   return executeRemoval(root, "uninstall", preview);
 }
 
 export async function purgeAssistant(target, options = {}) {
   const root = path.resolve(target);
-  const preview = await buildRemovalPreview(root, "purge");
-  if (!options.confirmed || preview.conflicts.length > 0) return preview;
+  const preview = await buildRemovalPreview(root, "purge", options.layout ?? null);
+  if (
+    !options.confirmed ||
+    preview.conflicts.length > 0 ||
+    preview.relocation_choice_required
+  ) return preview;
   return executeRemoval(root, "purge", preview);
 }
 

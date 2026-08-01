@@ -9,6 +9,7 @@
     "candidate_nodes",
     "coverage_groups",
     "semantic_coverage",
+    "document_assets",
     "legacy_surfaces",
     "lineage",
     "closed_book_audit",
@@ -237,6 +238,61 @@
         }
       }
     },
+    "document_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "observed_role",
+          "proposed_action",
+          "proposed_destination",
+          "target_ids",
+          "reason",
+          "requires_confirmation",
+          "decision_status"
+        ],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "observed_role": {
+            "type": "string",
+            "enum": [
+              "human_document",
+              "repository_surface",
+              "assistant_control",
+              "data",
+              "config",
+              "code",
+              "artifact",
+              "ambiguous"
+            ]
+          },
+          "proposed_action": {
+            "type": "string",
+            "enum": [
+              "move_to_docs",
+              "cold_in_place",
+              "already_in_docs",
+              "report_output",
+              "not_document_asset",
+              "ask_user"
+            ]
+          },
+          "proposed_destination": { "type": ["string", "null"] },
+          "target_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "reason": { "type": "string", "minLength": 1 },
+          "requires_confirmation": { "type": "boolean" },
+          "decision_status": {
+            "type": "string",
+            "enum": ["not_required", "pending", "approved"]
+          }
+        }
+      }
+    },
     "legacy_surfaces": {
       "type": "array",
       "items": {
@@ -288,6 +344,7 @@
             "enum": [
               "preserve",
               "integrate_then_preserve",
+              "integrate_then_cold",
               "integrate_then_move",
               "integrate_then_remove",
               "ask_user"

@@ -12,6 +12,10 @@ import { validateBootstrapOutput } from "./bootstrap-contract.mjs";
 import { finalizeInstalledProject } from "./initialization.mjs";
 import { pathExists, writeUtf8 } from "./files.mjs";
 import { serializeNodeDocument } from "./meta.mjs";
+import {
+  applyApprovedRelocations,
+  rollbackRelocationTransaction
+} from "./relocation.mjs";
 
 function requiredBlockers(output) {
   return [
@@ -20,7 +24,10 @@ function requiredBlockers(output) {
       .map((gap) => ({ id: gap.id, kind: "gap" })),
     ...(output.conflicts ?? [])
       .filter((conflict) => conflict.material)
-      .map((conflict) => ({ id: conflict.id, kind: "conflict" }))
+      .map((conflict) => ({ id: conflict.id, kind: "conflict" })),
+    ...(output.document_assets ?? [])
+      .filter((asset) => asset.decision_status === "pending")
+      .map((asset) => ({ id: asset.path, kind: "document_asset" }))
   ];
 }
 
@@ -34,6 +41,20 @@ function changedCandidateIds(before, after) {
   const ids = new Set([...left.keys(), ...right.keys()]);
   return [...ids].filter(
     (id) => JSON.stringify(left.get(id)) !== JSON.stringify(right.get(id))
+  );
+}
+
+function documentAssetMap(output) {
+  return new Map((output.document_assets ?? []).map((asset) => [asset.path, asset]));
+}
+
+function changedDocumentAssetPaths(before, after) {
+  const left = documentAssetMap(before);
+  const right = documentAssetMap(after);
+  const paths = new Set([...left.keys(), ...right.keys()]);
+  return [...paths].filter(
+    (assetPath) =>
+      JSON.stringify(left.get(assetPath)) !== JSON.stringify(right.get(assetPath))
   );
 }
 
@@ -61,7 +82,8 @@ function validateResolutionPackage(
     ...validateBootstrapOutput(resolution.resolved_output, inventory, {
       profile,
       semanticManifest,
-      semanticLedger
+      semanticLedger,
+      allowApprovedDocumentAssets: confirmed
     })
   );
 
@@ -74,7 +96,7 @@ function validateResolutionPackage(
   for (const decision of resolution.decisions ?? []) {
     if (
       !decision ||
-      !["gap", "conflict"].includes(decision.kind) ||
+      !["gap", "conflict", "document_asset"].includes(decision.kind) ||
       typeof decision.id !== "string" ||
       typeof decision.decision !== "string" ||
       decision.decision.trim().length === 0 ||
@@ -104,6 +126,11 @@ function validateResolutionPackage(
         );
       }
     }
+    if (decision.kind === "document_asset" && !confirmed) {
+      findings.push(
+        "document relocation decisions require one explicit whole-plan confirmation"
+      );
+    }
   }
   for (const key of required) {
     if (!provided.has(key)) findings.push(`missing resolution for ${key}`);
@@ -114,6 +141,38 @@ function validateResolutionPackage(
   for (const id of changedCandidateIds(original, resolution.resolved_output)) {
     if (!affected.has(id)) {
       findings.push(`changed candidate ${id} is not declared by a resolution decision`);
+    }
+  }
+  const assetDecisionPaths = new Set(
+    (resolution.decisions ?? [])
+      .filter((decision) => decision.kind === "document_asset")
+      .map((decision) => decision.id)
+  );
+  for (const assetPath of changedDocumentAssetPaths(
+    original,
+    resolution.resolved_output
+  )) {
+    if (!assetDecisionPaths.has(assetPath)) {
+      findings.push(
+        `changed document asset ${assetPath} is not declared by a resolution decision`
+      );
+    }
+  }
+  for (const asset of resolution.resolved_output.document_assets ?? []) {
+    if (asset.decision_status === "approved") {
+      if (!["move_to_docs", "cold_in_place"].includes(asset.proposed_action)) {
+        findings.push(
+          `approved document asset ${asset.path} has no executable disposition`
+        );
+      }
+      if (!assetDecisionPaths.has(asset.path)) {
+        findings.push(
+          `approved document asset ${asset.path} lacks a resolution decision`
+        );
+      }
+    }
+    if (asset.proposed_action === "ask_user") {
+      findings.push(`resolved document asset ${asset.path} still asks the user`);
     }
   }
   if (requiredBlockers(resolution.resolved_output).length > 0) {
@@ -209,6 +268,7 @@ export async function resolveBootstrap(target, resolution, options = {}) {
   );
   const backupRoot = path.join(transactionRoot, "backup");
   const stagedRoot = path.join(bootstrapRoot, `staging-${transactionId}`);
+  let relocation = null;
   await mkdir(backupRoot, { recursive: true });
   await cp(bootstrapRoot, path.join(backupRoot, "bootstrap"), {
     recursive: true
@@ -241,6 +301,21 @@ export async function resolveBootstrap(target, resolution, options = {}) {
       }, null, 2)}\n`
     );
 
+    relocation = await applyApprovedRelocations(
+      root,
+      resolution.resolved_output.document_assets ?? [],
+      {
+        confirmed: options.confirmed === true,
+        approval: resolution.decisions
+          .filter((decision) => decision.kind === "document_asset")
+          .map((decision) => ({
+            path: decision.id,
+            decision: decision.decision,
+            rationale: decision.rationale
+          }))
+      }
+    );
+
     const completion = await finalizeInstalledProject(root, {
       initializationStatus: "bootstrap_incomplete",
       probeSandbox: options.probeSandbox
@@ -253,6 +328,7 @@ export async function resolveBootstrap(target, resolution, options = {}) {
         type: "bootstrap_resolution",
         status: "committed",
         decisions: resolution.decisions,
+        relocation_transaction_id: relocation.transaction_id,
         completion: {
           initialization_status: completion.initialization_status,
           readiness: completion.readiness
@@ -267,6 +343,9 @@ export async function resolveBootstrap(target, resolution, options = {}) {
       completion
     };
   } catch (error) {
+    if (relocation?.transaction_id) {
+      await rollbackRelocationTransaction(root, relocation.transaction_id);
+    }
     await rm(bootstrapRoot, { recursive: true, force: true });
     await cp(path.join(backupRoot, "bootstrap"), bootstrapRoot, {
       recursive: true

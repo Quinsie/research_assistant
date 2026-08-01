@@ -95,9 +95,17 @@ function humanResult(value) {
       `Preserve: ${value.preserve.join(", ")}.`
     ];
     if (value.conflicts.length) lines.push(`Conflicts: ${value.conflicts.join("; ")}.`);
+    if (value.relocation_choice_required) {
+      lines.push(
+        "Assistant-approved document relocations are still active. Choose " +
+        "--keep-layout or --restore-relocations; neither choice overwrites a " +
+        "modified destination or an occupied original path."
+      );
+    }
     if (value.status === "preview" && value.conflicts.length === 0) {
       lines.push(
-        `No changes made. Run: assistant ${value.operation} --target ${shellTarget(value.target)} --confirm`
+        `No changes made. Run: assistant ${value.operation} --target ${shellTarget(value.target)} ` +
+        `${value.relocation_choice_required ? "--keep-layout " : ""}--confirm`
       );
     }
     return lines.join("\n");
@@ -128,6 +136,12 @@ function humanResult(value) {
         `${semantic.gaps ?? 0} gaps, ${semantic.conflicts ?? 0} conflicts, ` +
         `${semantic.tokens_used ?? "unknown"} tokens.`
       );
+      if ((semantic.pending_document_decisions ?? 0) > 0) {
+        lines.push(
+          `${semantic.pending_document_decisions} document placement decision(s) ` +
+          "require one preview-first approval in interactive Codex."
+        );
+      }
     }
     if (completion.readiness) lines.push(`Readiness: ${completion.readiness}.`);
     if (completion.readiness === "system_migration_required") {
@@ -153,6 +167,13 @@ function humanResult(value) {
       );
     } else if (completion.next) {
       lines.push(`Next: ${completion.next}`);
+    }
+    if (["ready", "ready_with_gaps"].includes(status)) {
+      lines.push(
+        "Document boundary: docs/ is human-managed cold storage. The Assistant " +
+        "does not list, search, or read it unless the current prompt names an " +
+        "exact file or directory. docs/report/ is only the derived-report output."
+      );
     }
     return lines.join("\n");
   }
@@ -331,9 +352,9 @@ async function main() {
       "    [--profile <name> | -p <name> | --model <id> --effort <level>]\n" +
       "    [--source <path>] [--yes | --allow-large-project]\n" +
       "    [--json]\n" +
-      "  assistant uninstall --target <path> [--confirm] [--json]\n" +
+      "  assistant uninstall --target <path> [--keep-layout | --restore-relocations] [--confirm] [--json]\n" +
       "  assistant export --target <path> --output <path> [--json]\n" +
-      "  assistant purge --target <path> [--confirm] [--json]\n" +
+      "  assistant purge --target <path> [--keep-layout | --restore-relocations] [--confirm] [--json]\n" +
       "  assistant update --target <path> [--json]\n" +
       "  assistant bootstrap --target <path>\n" +
       "  assistant bootstrap-recover --target <path> --rejected <id>\n" +
@@ -599,8 +620,16 @@ async function main() {
     return;
   }
   if (command === "uninstall") {
+    if (options["keep-layout"] && options["restore-relocations"]) {
+      throw new Error("--keep-layout and --restore-relocations are mutually exclusive");
+    }
     printJson(await uninstallAssistant(target, {
-      confirmed: options.confirm === true
+      confirmed: options.confirm === true,
+      layout: options["restore-relocations"]
+        ? "restore"
+        : options["keep-layout"]
+          ? "keep"
+          : null
     }));
     return;
   }
@@ -611,8 +640,16 @@ async function main() {
     return;
   }
   if (command === "purge") {
+    if (options["keep-layout"] && options["restore-relocations"]) {
+      throw new Error("--keep-layout and --restore-relocations are mutually exclusive");
+    }
     printJson(await purgeAssistant(target, {
-      confirmed: options.confirm === true
+      confirmed: options.confirm === true,
+      layout: options["restore-relocations"]
+        ? "restore"
+        : options["keep-layout"]
+          ? "keep"
+          : null
     }));
     return;
   }

@@ -56,7 +56,7 @@ function tomlString(value) {
   return JSON.stringify(value.replaceAll("\\", "/"));
 }
 
-function replacements(root) {
+function replacements(root, boundaries = []) {
   return {
     PROJECT_ROOT_TOML: tomlString(root),
     NODE_EXECUTABLE_TOML: tomlString(process.execPath),
@@ -75,7 +75,19 @@ function replacements(root) {
     GATEWAY_SCRIPT_TOML: tomlString(
       path.join(root, ".assistant", "system", "runtime", "gateway.mjs")
     ),
-    ADDITIONAL_RESTRICTED_TOML: ""
+    ADDITIONAL_RESTRICTED_TOML: boundaries
+      .filter((boundary) => {
+        const relative = boundary.relative?.replaceAll("\\", "/") ?? "";
+        return relative && !(
+          relative === "docs" ||
+          relative.startsWith("docs/") ||
+          relative === ".assistant/vault" ||
+          relative.startsWith(".assistant/vault/")
+        );
+      })
+      .map((boundary) =>
+        `${JSON.stringify(boundary.relative.replaceAll("\\", "/"))} = "deny"`)
+      .join("\n")
   };
 }
 
@@ -111,7 +123,17 @@ async function buildStaging(root, ledger) {
     recursive: true
   });
   await copyInstalledRuntime(system);
-  const values = replacements(root);
+  const boundaryPath = path.join(
+    root,
+    ".assistant",
+    "internal",
+    "restricted",
+    "boundaries.json"
+  );
+  const boundaries = await pathExists(boundaryPath)
+    ? JSON.parse(await readFile(boundaryPath, "utf8")).boundaries ?? []
+    : [];
+  const values = replacements(root, boundaries);
   await renderInstalledFile(path.join(system, "assistant.cmd"), values);
   await renderInstalledFile(path.join(system, "assistant"), values);
 

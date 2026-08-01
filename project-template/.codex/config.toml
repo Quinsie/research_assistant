@@ -1,15 +1,16 @@
 default_permissions = "assistant_project"
 
 [permissions.assistant_project]
-description = "Project work with assistant source and report zones denied."
+description = "Project work with human document and assistant vault zones denied."
 extends = ":workspace"
 
 [permissions.assistant_project.filesystem.":workspace_roots"]
-"docs/user" = "deny"
-"docs/report" = "deny"
+"docs" = "deny"
 ".assistant/vault" = "deny"
 ".assistant/internal/restricted" = "deny"
+# assistant-dynamic-boundaries:start
 {{ADDITIONAL_RESTRICTED_TOML}}
+# assistant-dynamic-boundaries:end
 
 [[hooks.UserPromptSubmit]]
 

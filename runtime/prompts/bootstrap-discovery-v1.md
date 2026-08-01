@@ -19,7 +19,7 @@ Rules:
 - Do not turn a one-off example such as an archive directory into a universal
   rule.
 - Existing-project initialization is the one-time survey that may inspect
-  legacy `docs/user`, `docs/report`, and similarly named assistant cold paths.
+  legacy human documents wherever they are located.
   Do not convert a normal-operation cold-path rule into a bootstrap exclusion
   unless its evidence explicitly forbids initialization or inventory surveys
   too. Independent repository safety, privacy, subtree, and access boundaries

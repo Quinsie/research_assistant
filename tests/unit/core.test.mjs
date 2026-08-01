@@ -8,6 +8,7 @@ import {
   initializeBlankProject,
   initializeProject
 } from "../../runtime/lib/installer.mjs";
+import { inventoryProject } from "../../runtime/lib/inventory.mjs";
 import { activateBootstrap } from "../../runtime/lib/activation.mjs";
 import {
   RESEARCH_WORKFLOW_HEADINGS,
@@ -80,9 +81,57 @@ import {
 } from "../../runtime/lib/validator.mjs";
 import { updateAssistant } from "../../runtime/lib/updater.mjs";
 import {
+  extractDocumentRepresentation
+} from "../../runtime/lib/document-extractor.mjs";
+import {
+  applyApprovedRelocations,
+  previewRelocationRestore,
+  restoreRelocations
+} from "../../runtime/lib/relocation.mjs";
+import {
   checkAvailableUpdate,
   compareVersions
 } from "../../runtime/lib/version-check.mjs";
+
+function storedZip(entries) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  for (const [name, content] of entries) {
+    const nameBytes = Buffer.from(name, "utf8");
+    const data = Buffer.from(content, "utf8");
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    localParts.push(local, nameBytes, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
 
 function closedBookContract(originIds, currentIds = originIds) {
   return {
@@ -579,9 +628,10 @@ test("explicit initialization source is imported with durable authority context"
     assert.equal(result.initialization_status, "bootstrap_incomplete");
     const imported = path.join(
       target,
-      "docs",
-      "user",
-      "bootstrap-source",
+      ".assistant",
+      "vault",
+      "intake",
+      "source-001",
       "initial plan.md"
     );
     assert.equal(await readFile(imported, "utf8"), "# Approved initial direction\n");
@@ -599,7 +649,7 @@ test("explicit initialization source is imported with durable authority context"
     );
     assert.equal(authority.authority, "current_user_instruction");
     assert.deepEqual(authority.imported_paths, [
-      "docs/user/bootstrap-source/initial plan.md"
+      ".assistant/vault/intake/source-001/initial plan.md"
     ]);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -611,8 +661,7 @@ test("in-project initialization source becomes a dynamic restricted boundary", a
   const target = path.join(tempRoot, "legacy project");
   const source = path.join(
     target,
-    "docs",
-    "user_report",
+    "notes",
     "approved direction.md"
   );
   try {
@@ -636,8 +685,8 @@ test("in-project initialization source becomes a dynamic restricted boundary", a
     );
     assert.deepEqual(registry.boundaries, [
       {
-        relative: "docs/user_report/approved direction.md",
-        kind: "source",
+        relative: "notes/approved direction.md",
+        kind: "document",
         boundary_kind: "file",
         reason: "explicit_initialization_source"
       }
@@ -649,7 +698,7 @@ test("in-project initialization source becomes a dynamic restricted boundary", a
     );
     assert.match(
       config,
-      /"docs\/user_report\/approved direction\.md" = "deny"/
+      /"notes\/approved direction\.md" = "deny"/
     );
     assert.doesNotMatch(config, /\{\{[A-Z_]+\}\}/);
 
@@ -2554,7 +2603,7 @@ test("semantic bootstrap preserves a Codex thread and genuinely resumes after in
       "    ? {schema:'assistant.bootstrap-discovery/v1',boundaries:[],uncertainties:[]}",
       "    : schema.includes('bootstrap-batch-output')",
       "      ? (() => { const ids = [...stdin.matchAll(/SEM-[A-F0-9]{20}/g)].map((match) => match[0]); const number = stdin.match(/batch=(\\d+)/)?.[1] ?? '1'; return {schema:'assistant.bootstrap-batch-output/v1',batch_id:`BATCH-${number.padStart(4,'0')}`,unit_analyses:[...new Set(ids)].map((unit_id) => ({unit_id,classification:'nonsemantic',semantic_roles:[],meaning:'Synthetic resume fixture unit.',durable_facts:[],exact_elements:[],authority_claims:[],temporal_status:'not_applicable',relation_claims:[],conflict_candidates:[],uncertainties:[]}))}; })()",
-      "      : (() => { const manifest = JSON.parse(readFileSync('semantic-manifest.json','utf8')); return {schema:'assistant.bootstrap-output/v1',project_summary:{purpose:null,scope:null,current_state:'Observed existing project',current_authorization:null,authorization_state:'not_authorized',authorized_work:[],blocked_work:['Unspecified project work'],authorization_basis_paths:[],next_safe_route:'Ask the user for direction'},candidate_nodes:[],coverage_groups:[{selector_kind:'exact_path',selector:'README.md',disposition:'preserved',reason:'Root orientation document accounted for'}],semantic_coverage:manifest.units.map((unit) => ({unit_id:unit.unit_id,disposition:'observed_noncanonical',target_ids:[],reason:'Synthetic nonsemantic resume fixture'})),legacy_surfaces:[],lineage:{origin_ids:[],ordered_stage_ids:[],current_ids:[],complete:true,missing:[]},closed_book_audit:{origin_to_current_explainable:true,current_authorization_explainable:true,hypotheses_explainable:true,decisions_explainable:true,live_legacy_dependencies:[],missing_concerns:[]},gaps:[],conflicts:[]}; })();",
+      "      : (() => { const manifest = JSON.parse(readFileSync('semantic-manifest.json','utf8')); return {schema:'assistant.bootstrap-output/v1',project_summary:{purpose:null,scope:null,current_state:'Observed existing project',current_authorization:null,authorization_state:'not_authorized',authorized_work:[],blocked_work:['Unspecified project work'],authorization_basis_paths:[],next_safe_route:'Ask the user for direction'},candidate_nodes:[],coverage_groups:[{selector_kind:'exact_path',selector:'README.md',disposition:'preserved',reason:'Root orientation document accounted for'}],semantic_coverage:manifest.units.map((unit) => ({unit_id:unit.unit_id,disposition:'observed_noncanonical',target_ids:[],reason:'Synthetic nonsemantic resume fixture'})),document_assets:manifest.document_assets.map((asset) => ({path:asset.path,observed_role:'artifact',proposed_action:'not_document_asset',proposed_destination:null,target_ids:[],reason:'Synthetic nonsemantic resume fixture',requires_confirmation:false,decision_status:'not_required'})),legacy_surfaces:[],lineage:{origin_ids:[],ordered_stage_ids:[],current_ids:[],complete:true,missing:[]},closed_book_audit:{origin_to_current_explainable:true,current_authorization_explainable:true,hypotheses_explainable:true,decisions_explainable:true,live_legacy_dependencies:[],missing_concerns:[]},gaps:[],conflicts:[]}; })();",
       "  writeFileSync(output, JSON.stringify(payload));",
       "  process.stdout.write(JSON.stringify({type:'turn.completed',usage:{input_tokens:10,output_tokens:5}}) + '\\n');",
       "});"
@@ -2914,8 +2963,10 @@ test("prompt grant and gateway enforce exact restricted boundaries", async () =>
   const target = path.join(tempRoot, "project with spaces");
   try {
     await initializeBlankProject(target);
-    const allowed = path.join(target, "docs", "user", "지정 자료.md");
-    const sibling = path.join(target, "docs", "user", "other.md");
+    const documentDir = path.join(target, "docs", "materials");
+    await mkdir(documentDir, { recursive: true });
+    const allowed = path.join(documentDir, "지정 자료.md");
+    const sibling = path.join(documentDir, "other.md");
     await writeFile(allowed, "allowed content\n", "utf8");
     await writeFile(sibling, "must remain hidden\n", "utf8");
 
@@ -3056,7 +3107,9 @@ test("source snapshot preserves binary bytes without exposing them as text", asy
   const target = path.join(tempRoot, "project");
   try {
     await initializeBlankProject(target);
-    const source = path.join(target, "docs", "user", "artifact.bin");
+    const documentDir = path.join(target, "docs", "attachments");
+    await mkdir(documentDir, { recursive: true });
+    const source = path.join(documentDir, "artifact.bin");
     await writeFile(source, Buffer.from([0, 1, 2, 255, 0, 17]));
     const output = await runHook(target, `이 파일을 보존해: "${source}"`);
     const token = JSON.parse(
@@ -4076,4 +4129,417 @@ test("version checker performs one remote check per interactive session", async 
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("safe document extraction represents modern formats and exposes unsupported gaps", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-doc-extract-"));
+  try {
+    const docx = path.join(tempRoot, "proposal.docx");
+    await writeFile(
+      docx,
+      storedZip([
+        [
+          "word/document.xml",
+          "<w:document><w:body><w:p><w:r><w:t>North star geometry</w:t></w:r></w:p></w:body></w:document>"
+        ],
+        [
+          "word/comments.xml",
+          "<w:comments><w:comment><w:p><w:r><w:t>Preserve control C-17</w:t></w:r></w:p></w:comment></w:comments>"
+        ]
+      ])
+    );
+    const docxResult = await extractDocumentRepresentation(docx);
+    assert.equal(docxResult.status, "extracted");
+    assert.match(docxResult.text, /North star geometry/);
+    assert.match(docxResult.text, /Preserve control C-17/);
+
+    const workbook = path.join(tempRoot, "conditions.xlsx");
+    await writeFile(
+      workbook,
+      storedZip([
+        [
+          "xl/sharedStrings.xml",
+          "<sst><si><t>sample_condition</t></si></sst>"
+        ],
+        [
+          "xl/worksheets/sheet1.xml",
+          "<worksheet><sheetData><row><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\"><f>2+2</f><v>4</v></c></row></sheetData></worksheet>"
+        ]
+      ])
+    );
+    const workbookResult = await extractDocumentRepresentation(workbook);
+    assert.equal(workbookResult.status, "extracted");
+    assert.match(workbookResult.text, /sample_condition/);
+    assert.match(workbookResult.text, /formula="2\+2"/);
+
+    const pdf = path.join(tempRoot, "evidence.pdf");
+    await writeFile(
+      pdf,
+      "%PDF-1.4\n1 0 obj\n<<>>\nstream\nBT (Observed effect 42) Tj ET\nendstream\nendobj\n%%EOF",
+      "latin1"
+    );
+    const pdfResult = await extractDocumentRepresentation(pdf);
+    assert.equal(pdfResult.status, "partial");
+    assert.match(pdfResult.text, /Observed effect 42/);
+
+    const legacy = path.join(tempRoot, "legacy.doc");
+    await writeFile(legacy, Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
+    const legacyResult = await extractDocumentRepresentation(legacy);
+    assert.equal(legacyResult.status, "unsupported");
+    assert.match(legacyResult.limitations.join(" "), /safe conversion/);
+
+    const unsafe = path.join(tempRoot, "unsafe.docx");
+    await writeFile(
+      unsafe,
+      storedZip([["../word/document.xml", "<w:t>unsafe</w:t>"]])
+    );
+    const unsafeResult = await extractDocumentRepresentation(unsafe);
+    assert.equal(unsafeResult.status, "unsupported");
+    assert.match(unsafeResult.limitations.join(" "), /unsafe archive entry/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("semantic evidence includes safe document meaning and explicit extraction gaps", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-doc-semantic-"));
+  try {
+    const docx = path.join(tempRoot, "arbitrary", "계획 문서.docx");
+    await mkdir(path.dirname(docx), { recursive: true });
+    await writeFile(
+      docx,
+      storedZip([
+        [
+          "word/document.xml",
+          "<w:document><w:body><w:p><w:r><w:t>Gate Alpha requires metric 0.80</w:t></w:r></w:p></w:body></w:document>"
+        ]
+      ])
+    );
+    await writeFile(path.join(tempRoot, "legacy.xls"), Buffer.from([1, 2, 3]));
+    const inventory = await import("../../runtime/lib/inventory.mjs").then(
+      ({ inventoryProject }) => inventoryProject(tempRoot)
+    );
+    const semantic = await buildSemanticEvidenceBatches(tempRoot, inventory);
+    assert.equal(semantic.manifest.document_assets.length, 2);
+    assert.ok(
+      semantic.manifest.units.some((unit) =>
+        unit.path === "arbitrary/계획 문서.docx" &&
+        unit.extraction_status === "extracted"
+      )
+    );
+    assert.match(
+      semantic.batches.map((batch) => batch.packet).join("\n"),
+      /Gate Alpha requires metric 0\.80/
+    );
+    assert.ok(
+      semantic.manifest.artifacts.some((artifact) =>
+        artifact.path === "legacy.xls" &&
+        artifact.disposition === "extraction_gap"
+      )
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("approved relocation is hashed, reversible, and refuses modified destinations", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-relocate-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    const original = path.join(target, "notes", "long plan.md");
+    await mkdir(path.dirname(original), { recursive: true });
+    await writeFile(original, "# Durable plan\n\nGate Z requires review.\n", "utf8");
+    const result = await applyApprovedRelocations(
+      target,
+      [{
+        path: "notes/long plan.md",
+        observed_role: "human_document",
+        proposed_action: "move_to_docs",
+        proposed_destination: "docs/plans/long plan.md",
+        target_ids: ["PLAN-Z"],
+        reason: "Canonical meaning is integrated; preserve the original as cold human material.",
+        requires_confirmation: true,
+        decision_status: "approved"
+      }],
+      {
+        confirmed: true,
+        approval: [{ path: "notes/long plan.md", decision: "approve", rationale: "test" }]
+      }
+    );
+    assert.equal(result.status, "committed");
+    assert.equal(await pathExists(original), false);
+    const destination = path.join(target, "docs", "plans", "long plan.md");
+    assert.equal(await pathExists(destination), true);
+    const preview = await previewRelocationRestore(target);
+    assert.equal(preview.status, "preview");
+    assert.equal(preview.assets[0].status, "restorable");
+
+    await writeFile(destination, "# Human edited after relocation\n", "utf8");
+    const blocked = await restoreRelocations(target, { confirmed: true });
+    assert.equal(blocked.status, "conflict");
+    assert.equal(blocked.assets[0].status, "blocked_destination_modified");
+    assert.equal(await pathExists(original), false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("cold-in-place registry grants only the exact user-named document", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-cold-in-place-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    const cold = path.join(target, "notes", "decision.txt");
+    const sibling = path.join(target, "notes", "unrelated.txt");
+    await mkdir(path.dirname(cold), { recursive: true });
+    await writeFile(cold, "approved decision\n", "utf8");
+    await writeFile(sibling, "unrelated\n", "utf8");
+    await applyApprovedRelocations(
+      target,
+      [{
+        path: "notes/decision.txt",
+        observed_role: "human_document",
+        proposed_action: "cold_in_place",
+        proposed_destination: null,
+        target_ids: ["DEC-COLD"],
+        reason: "Repository layout should remain unchanged.",
+        requires_confirmation: true,
+        decision_status: "approved"
+      }],
+      { confirmed: true, approval: [{ path: "notes/decision.txt" }] }
+    );
+    const registry = JSON.parse(
+      await readFile(
+        path.join(
+          target,
+          ".assistant",
+          "internal",
+          "restricted",
+          "boundaries.json"
+        ),
+        "utf8"
+      )
+    );
+    assert.ok(
+      registry.boundaries.some((boundary) =>
+        boundary.relative === "notes/decision.txt" &&
+        boundary.kind === "document"
+      )
+    );
+    const updated = await updateAssistant(target, { force: true });
+    assert.equal(updated.status, "completed");
+    assert.match(
+      await readFile(path.join(target, ".codex", "config.toml"), "utf8"),
+      /"notes\/decision\.txt" = "deny"/
+    );
+    const hook = await runHook(target, `Read exactly "${cold}"`);
+    const context = JSON.parse(hook.hookSpecificOutput.additionalContext);
+    assert.equal(context.grants.length, 1);
+    const token = context.grants[0].token;
+    const [allowed, denied] = await callGateway(target, [
+      {
+        name: "source_read_file",
+        arguments: { grant_token: token, path: cold }
+      },
+      {
+        name: "source_read_file",
+        arguments: { grant_token: token, path: sibling }
+      }
+    ]);
+    assert.match(allowed.result.content[0].text, /approved decision/);
+    assert.match(denied.error.message, /outside the granted zone|exact prompt boundary/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle requires an explicit relocation layout and can restore before purge", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-relocate-purge-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    const original = path.join(target, "memo.txt");
+    await writeFile(original, "memo\n", "utf8");
+    await applyApprovedRelocations(
+      target,
+      [{
+        path: "memo.txt",
+        observed_role: "human_document",
+        proposed_action: "move_to_docs",
+        proposed_destination: "docs/memo.txt",
+        target_ids: ["MEMO-1"],
+        reason: "test relocation",
+        requires_confirmation: true,
+        decision_status: "approved"
+      }],
+      { confirmed: true, approval: [{ path: "memo.txt" }] }
+    );
+    const undecided = await purgeAssistant(target, { confirmed: true });
+    assert.equal(undecided.relocation_choice_required, true);
+    assert.equal(await pathExists(path.join(target, ".assistant")), true);
+    const completed = await purgeAssistant(target, {
+      confirmed: true,
+      layout: "restore"
+    });
+    assert.equal(completed.status, "completed");
+    assert.equal(await readFile(original, "utf8"), "memo\n");
+    assert.equal(await pathExists(path.join(target, ".assistant")), false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap resolution applies one approved document transaction before closed-book activation", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-bootstrap-relocate-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    const source = path.join(target, "notes", "context.md");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(
+      source,
+      "# Context\n\nThe durable purpose is calibrated observation.\n",
+      "utf8"
+    );
+    await initializeProject(target);
+    const bootstrapRoot = path.join(
+      target,
+      ".assistant",
+      "internal",
+      "bootstrap"
+    );
+    const inventory = JSON.parse(
+      await readFile(path.join(bootstrapRoot, "inventory.json"), "utf8")
+    );
+    const semantic = await buildSemanticEvidenceBatches(target, inventory);
+    await writeFile(
+      path.join(bootstrapRoot, "semantic-manifest.json"),
+      `${JSON.stringify(semantic.manifest, null, 2)}\n`,
+      "utf8"
+    );
+    const node = {
+      id: "FND-CONTEXT-001",
+      type: "foundation",
+      status: "active",
+      authority: "candidate_unintegrated",
+      certainty: "direct",
+      relations: [],
+      title: "Calibrated observation foundation",
+      body: "The durable purpose is calibrated observation.",
+      semantic_sections: [],
+      evidence_paths: ["notes/context.md"],
+      legacy_aliases: []
+    };
+    const base = {
+      schema: "assistant.bootstrap-output/v1",
+      project_summary: {
+        purpose: "Calibrated observation",
+        scope: "Documented project context",
+        current_state: "Initialized context",
+        current_authorization: "Await user direction",
+        authorization_state: "not_authorized",
+        authorized_work: [],
+        blocked_work: ["Unspecified execution"],
+        authorization_basis_paths: [],
+        next_safe_route: "Await user direction"
+      },
+      candidate_nodes: [node],
+      coverage_groups: inventory.entries.map((entry) => ({
+        selector_kind: "exact_path",
+        selector: entry.path,
+        disposition: "preserved",
+        reason: "Bootstrap fixture coverage"
+      })),
+      semantic_coverage: semantic.manifest.units.map((unit) => ({
+        unit_id: unit.unit_id,
+        disposition: "preserved",
+        target_ids: ["FND-CONTEXT-001"],
+        reason: "Meaning is preserved by the foundation owner"
+      })),
+      document_assets: [{
+        path: "notes/context.md",
+        observed_role: "human_document",
+        proposed_action: "move_to_docs",
+        proposed_destination: "docs/context/context.md",
+        target_ids: ["FND-CONTEXT-001"],
+        reason: "Move the integrated long-form source into human cold storage.",
+        requires_confirmation: true,
+        decision_status: "pending"
+      }],
+      legacy_surfaces: [],
+      lineage: {
+        origin_ids: ["FND-CONTEXT-001"],
+        ordered_stage_ids: ["FND-CONTEXT-001"],
+        current_ids: ["FND-CONTEXT-001"],
+        complete: true,
+        missing: []
+      },
+      closed_book_audit: {
+        origin_to_current_explainable: true,
+        current_authorization_explainable: true,
+        hypotheses_explainable: true,
+        decisions_explainable: true,
+        live_legacy_dependencies: [],
+        missing_concerns: []
+      },
+      gaps: [],
+      conflicts: []
+    };
+    await writeFile(
+      path.join(bootstrapRoot, "model-result.json"),
+      `${JSON.stringify(base, null, 2)}\n`,
+      "utf8"
+    );
+    const statePath = path.join(bootstrapRoot, "state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    state.status = "awaiting_user_input";
+    state.semantic_survey_complete = true;
+    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+
+    const resolved = structuredClone(base);
+    resolved.document_assets[0].decision_status = "approved";
+    const result = await resolveBootstrap(
+      target,
+      {
+        schema: "assistant.bootstrap-resolution/v1",
+        decisions: [{
+          kind: "document_asset",
+          id: "notes/context.md",
+          decision: "Approve the complete relocation preview.",
+          rationale: "Canonical meaning is complete and the move is reversible.",
+          affected_candidate_ids: []
+        }],
+        resolved_output: resolved
+      },
+      { confirmed: true, probeSandbox: false }
+    );
+    assert.equal(result.status, "committed");
+    assert.equal(
+      await pathExists(path.join(target, "docs", "context", "context.md")),
+      true
+    );
+    assert.equal(await pathExists(source), false);
+    const manifest = JSON.parse(
+      await readFile(path.join(target, ".assistant", "manifest.json"), "utf8")
+    );
+    assert.ok(["ready", "ready_with_gaps"].includes(manifest.initialization_status));
+    assert.equal((await validateProject(target)).valid, true);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("runtime does not encode corpus-specific document paths or master-plan names", async () => {
+  const runtimeRoot = path.resolve("runtime");
+  const files = await import("../../runtime/lib/files.mjs").then(
+    ({ listFilesRecursive }) => listFilesRecursive(runtimeRoot)
+  );
+  const text = [];
+  for (const entry of files) {
+    if (entry.kind !== "file" || !/\.(?:mjs|md|json)$/u.test(entry.path)) continue;
+    text.push(await readFile(path.join(runtimeRoot, ...entry.path.split("/")), "utf8"));
+  }
+  const joined = text.join("\n");
+  assert.doesNotMatch(joined, /docs\/research|docs\/agent|MASTER_PLAN\.md/u);
+  assert.doesNotMatch(joined, /(?:^|["'`])\/archive(?:\/|["'`])/mu);
 });

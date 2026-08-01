@@ -4,8 +4,7 @@
   "manifest_schema": "assistant.manifest/v1",
   "metadata_envelope": "assistant-meta-json-comment",
   "restricted_zones": [
-    "docs/user",
-    "docs/report",
+    "docs",
     ".assistant/vault"
   ]
 }

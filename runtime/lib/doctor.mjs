@@ -44,8 +44,7 @@ export async function requiredSecurityFragments(root) {
     : [];
   return [
     "[permissions.assistant_project]",
-    "\"docs/user\" = \"deny\"",
-    "\"docs/report\" = \"deny\"",
+    "\"docs\" = \"deny\"",
     "\".assistant/vault\" = \"deny\"",
     "\".assistant/internal/restricted\" = \"deny\"",
     "[[hooks.UserPromptSubmit]]",

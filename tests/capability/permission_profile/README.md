@@ -1,7 +1,7 @@
 # Permission profile capability fixture
 
 This fixture verifies that a Codex permission profile can read a normal
-workspace file while denying direct reads from `docs/user`, `docs/report`, and
+workspace file while denying direct reads from the whole `docs/` tree and
 `.assistant/vault`.
 
 The test is successful only when:

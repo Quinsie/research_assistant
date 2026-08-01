@@ -7,8 +7,7 @@ export const WINDOWS_RESTRICTED_CANARY =
   ".assistant/internal/restricted/direct-deny-canary.txt";
 
 const STANDARD_RESTRICTED_BOUNDARIES = Object.freeze([
-  { relative: "docs/user", boundary_kind: "directory" },
-  { relative: "docs/report", boundary_kind: "directory" },
+  { relative: "docs", boundary_kind: "directory" },
   { relative: ".assistant/vault", boundary_kind: "directory" },
   {
     relative: ".assistant/internal/restricted",
