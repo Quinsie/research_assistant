@@ -3,6 +3,10 @@ import path from "node:path";
 import { requiredSecurityFragments } from "./doctor.mjs";
 import { pathExists, writeUtf8 } from "./files.mjs";
 import { refreshValidatedHashes } from "./integrity.mjs";
+import {
+  competingControlPaths,
+  discoverReferencedControlSurfaces
+} from "./legacy-surfaces.mjs";
 import { parseNodeDocument, serializeNodeDocument } from "./meta.mjs";
 
 export async function inspectPendingMigrations(target) {
@@ -112,13 +116,9 @@ function competingAgentControlPaths(content) {
     /<!-- assistant-managed:start -->[\s\S]*?<!-- assistant-managed:end -->/gu,
     ""
   );
-  return [
-    ...new Set(
-      [...unmanaged.matchAll(
-        /(?:^|[\s`"'(])((?:docs|documentation)[/\\](?:agent|assistant)[/\\](?:INDEX|CURRENT|PLAN|POLICY)\.md)/gimu
-      )].map((match) => match[1].replaceAll("\\", "/"))
-    )
-  ];
+  return competingControlPaths(
+    discoverReferencedControlSurfaces(unmanaged)
+  );
 }
 
 export async function completeAgentsControlPlaneMigration(

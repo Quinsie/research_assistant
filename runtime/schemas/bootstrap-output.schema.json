@@ -8,6 +8,10 @@
     "project_summary",
     "candidate_nodes",
     "coverage_groups",
+    "semantic_coverage",
+    "legacy_surfaces",
+    "lineage",
+    "closed_book_audit",
     "gaps",
     "conflicts"
   ],
@@ -203,6 +207,153 @@
             ]
           },
           "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "semantic_coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["unit_id", "disposition", "target_ids", "reason"],
+        "properties": {
+          "unit_id": { "type": "string", "pattern": "^SEM-[A-F0-9]{20}$" },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "preserved",
+              "consolidated",
+              "historical",
+              "superseded",
+              "omitted_with_reason",
+              "observed_noncanonical"
+            ]
+          },
+          "target_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "legacy_surfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "roles",
+          "status",
+          "proposed_action",
+          "target_ids",
+          "reason"
+        ],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "instruction",
+                "policy",
+                "current",
+                "plan",
+                "decision",
+                "authorization",
+                "router",
+                "history",
+                "source",
+                "report"
+              ]
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "repository_native",
+              "canonical_candidate",
+              "competing_control_surface",
+              "user_source",
+              "derived_report",
+              "historical",
+              "nonsemantic",
+              "resolved"
+            ]
+          },
+          "proposed_action": {
+            "type": "string",
+            "enum": [
+              "preserve",
+              "integrate_then_preserve",
+              "integrate_then_move",
+              "integrate_then_remove",
+              "ask_user"
+            ]
+          },
+          "target_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin_ids",
+        "ordered_stage_ids",
+        "current_ids",
+        "complete",
+        "missing"
+      ],
+      "properties": {
+        "origin_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ordered_stage_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "current_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "complete": { "type": "boolean" },
+        "missing": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "closed_book_audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin_to_current_explainable",
+        "current_authorization_explainable",
+        "hypotheses_explainable",
+        "decisions_explainable",
+        "live_legacy_dependencies",
+        "missing_concerns"
+      ],
+      "properties": {
+        "origin_to_current_explainable": { "type": "boolean" },
+        "current_authorization_explainable": { "type": "boolean" },
+        "hypotheses_explainable": { "type": "boolean" },
+        "decisions_explainable": { "type": "boolean" },
+        "live_legacy_dependencies": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "missing_concerns": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     },

@@ -27,8 +27,12 @@ import {
 } from "../../runtime/lib/bootstrap-contract.mjs";
 import {
   buildDiscoveryPacket,
-  buildEvidencePacket
+  buildEvidencePacket,
+  buildSemanticEvidenceBatches
 } from "../../runtime/lib/evidence-packet.mjs";
+import {
+  discoverReferencedControlSurfaces
+} from "../../runtime/lib/legacy-surfaces.mjs";
 import { doctorProject } from "../../runtime/lib/doctor.mjs";
 import { pathExists, writeUtf8 } from "../../runtime/lib/files.mjs";
 import {
@@ -79,6 +83,28 @@ import {
   checkAvailableUpdate,
   compareVersions
 } from "../../runtime/lib/version-check.mjs";
+
+function closedBookContract(originIds, currentIds = originIds) {
+  return {
+    semantic_coverage: [],
+    legacy_surfaces: [],
+    lineage: {
+      origin_ids: originIds,
+      ordered_stage_ids: [],
+      current_ids: currentIds,
+      complete: true,
+      missing: []
+    },
+    closed_book_audit: {
+      origin_to_current_explainable: true,
+      current_authorization_explainable: true,
+      hypotheses_explainable: true,
+      decisions_explainable: true,
+      live_legacy_dependencies: [],
+      missing_concerns: []
+    }
+  };
+}
 
 async function runHook(target, prompt) {
   const script = path.join(
@@ -809,6 +835,7 @@ test("bootstrap activation groups records and survives restricted source deletio
         }
       ],
       coverage_groups: [],
+      ...closedBookContract(["FND-TEST-001"], ["WORK-TEST-001"]),
       gaps: [
         {
           id: "GAP-NONCRITICAL-001",
@@ -896,6 +923,84 @@ test("bootstrap activation groups records and survives restricted source deletio
   }
 });
 
+test("closed-book activation requires approved legacy move or removal to be physically complete", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-legacy-cleanup-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "README.md"), "Project origin.\n", "utf8");
+    await writeFile(
+      path.join(target, "old-state.md"),
+      "# Current state\n\nLegacy competing state.\n",
+      "utf8"
+    );
+    await initializeProject(target);
+    const output = {
+      schema: "assistant.bootstrap-output/v1",
+      project_summary: {
+        purpose: "Fixture",
+        scope: "Legacy cleanup",
+        current_state: "Migrated",
+        current_authorization: "None",
+        authorization_state: "not_authorized",
+        authorized_work: [],
+        blocked_work: ["Execution"],
+        authorization_basis_paths: [],
+        next_safe_route: "Await direction"
+      },
+      candidate_nodes: [
+        {
+          id: "FND-CLEANUP-001",
+          type: "foundation",
+          status: "active",
+          authority: "candidate_unintegrated",
+          certainty: "direct",
+          relations: [],
+          title: "Project origin",
+          body: "Project origin is retained.",
+          semantic_sections: [],
+          evidence_paths: ["README.md"],
+          legacy_aliases: []
+        }
+      ],
+      coverage_groups: [],
+      ...closedBookContract(["FND-CLEANUP-001"]),
+      legacy_surfaces: [
+        {
+          path: "old-state.md",
+          roles: ["current"],
+          status: "resolved",
+          proposed_action: "integrate_then_remove",
+          target_ids: ["FND-CLEANUP-001"],
+          reason: "User-approved migration into canonical knowledge"
+        }
+      ],
+      gaps: [],
+      conflicts: []
+    };
+    await writeFile(
+      path.join(
+        target,
+        ".assistant",
+        "internal",
+        "bootstrap",
+        "model-result.json"
+      ),
+      `${JSON.stringify(output, null, 2)}\n`,
+      "utf8"
+    );
+    await assert.rejects(
+      activateBootstrap(target),
+      /closed-book activation blocked/
+    );
+    await rm(path.join(target, "old-state.md"));
+    const result = await activateBootstrap(target);
+    assert.equal(result.status, "ready");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("bootstrap activation routes methodology and authorization by project profile", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-profile-route-"));
   async function prepare(target, profile, withAuthorization = false) {
@@ -954,6 +1059,7 @@ test("bootstrap activation routes methodology and authorization by project profi
           }
         ],
         coverage_groups: [],
+        ...closedBookContract(["REQ-PROFILE-001"], ["DESIGN-PROFILE-001"]),
         gaps: [],
         conflicts: []
       }, null, 2)}\n`,
@@ -1061,6 +1167,7 @@ test("bootstrap activation rolls back an interrupted applying journal before ret
           }
         ],
         coverage_groups: [],
+        ...closedBookContract(["FND-RECOVERY-001"]),
         gaps: [],
         conflicts: []
       }, null, 2)}\n`,
@@ -1188,6 +1295,7 @@ test("bootstrap activation pre-splits oversized collections before canonical com
       },
       candidate_nodes: candidates,
       coverage_groups: [],
+      ...closedBookContract(["FND-SPLIT-001"], ["FND-SPLIT-001"]),
       gaps: [],
       conflicts: []
     };
@@ -1268,6 +1376,7 @@ test("bootstrap resolution requires whole conflict confirmation and then activat
           reason: "Project direction evidence"
         }
       ],
+      ...closedBookContract(["FND-RESOLVE-001"]),
       gaps: [],
       conflicts: [
         {
@@ -1324,6 +1433,7 @@ test("bootstrap resolution requires whole conflict confirmation and then activat
           legacy_aliases: []
         }
       ],
+      ...closedBookContract(["FND-RESOLVE-001"], ["DEC-BOOT-001"]),
       conflicts: []
     };
     const resolution = {
@@ -2031,6 +2141,220 @@ test("bounded discovery applies explicit content boundaries without corpus-speci
   }
 });
 
+test("semantic batches preserve every arbitrary-path document unit and explicit boundary", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-semantic-units-"));
+  try {
+    const files = new Map([
+      [
+        "STATUS.md",
+        "# Current status\n\nActive milestone is M3.\n"
+      ],
+      [
+        "notes/project_memory/story.md",
+        [
+          "# Origin",
+          "",
+          "The project began to test a geometry mechanism.",
+          "",
+          "# Intermediate correction",
+          "",
+          `${"context ".repeat(90)}MIDDLE_HISTORY_SENTINEL ${"detail ".repeat(90)}`,
+          "",
+          "# Current",
+          "",
+          "The corrected branch is active."
+        ].join("\n")
+      ],
+      [
+        "wiki/decisions/accepted.txt",
+        "# Decision log\n\nD-7 changed the experiment naming rule.\n"
+      ],
+      [
+        "meta/state.json",
+        JSON.stringify({
+          current_state: "paused",
+          authorization: "not_authorized"
+        })
+      ],
+      [
+        "private/limited.md",
+        "# Hidden history\n\nBOUNDARY_SENTINEL\n"
+      ]
+    ]);
+    const entries = [];
+    for (const [relative, content] of files) {
+      const absolute = path.join(tempRoot, ...relative.split("/"));
+      await mkdir(path.dirname(absolute), { recursive: true });
+      await writeFile(absolute, content, "utf8");
+      entries.push({
+        path: relative,
+        kind: "file",
+        category: relative.endsWith(".json") ? "config" : "document",
+        size: Buffer.byteLength(content),
+        sha256: "fixture"
+      });
+    }
+    const result = await buildSemanticEvidenceBatches(
+      tempRoot,
+      { summary: { paths: entries.length, files: entries.length }, entries },
+      {
+        unitLimit: 300,
+        batchLimit: 700,
+        boundaries: [{ path: "private", access: "metadata_only" }]
+      }
+    );
+    const packet = result.batches.map((batch) => batch.packet).join("\n");
+    assert.match(packet, /MIDDLE_HISTORY_SENTINEL/);
+    assert.doesNotMatch(packet, /BOUNDARY_SENTINEL/);
+    assert.equal(result.manifest.semantic_files, 4);
+    assert.ok(result.manifest.semantic_units > 4);
+    assert.ok(
+      result.manifest.control_candidate_paths.includes(
+        "wiki/decisions/accepted.txt"
+      )
+    );
+    assert.ok(
+      result.manifest.artifacts.some(
+        (artifact) =>
+          artifact.path === "private/limited.md" &&
+          artifact.disposition === "metadata_only"
+      )
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("control-surface discovery follows meaning instead of fixed directory names", () => {
+  const first = discoverReferencedControlSurfaces(
+    [
+      "# Project routing",
+      "",
+      "Read `notes/project_memory/start-here.md` before work."
+    ].join("\n")
+  );
+  const second = discoverReferencedControlSurfaces(
+    [
+      "# Project routing",
+      "",
+      "Read `wiki/operations/status.txt` before work."
+    ].join("\n")
+  );
+  assert.deepEqual(first[0].roles, second[0].roles);
+  assert.equal(first[0].path, "notes/project_memory/start-here.md");
+  assert.equal(second[0].path, "wiki/operations/status.txt");
+});
+
+test("semantic contract rejects current-only compression and lost exact conditions", () => {
+  const unitIds = [
+    "SEM-AAAAAAAAAAAAAAAAAAAA",
+    "SEM-BBBBBBBBBBBBBBBBBBBB",
+    "SEM-CCCCCCCCCCCCCCCCCCCC"
+  ];
+  const semanticManifest = {
+    schema: "assistant.semantic-manifest/v1",
+    units: [
+      { unit_id: unitIds[0], path: "기록/변경.md", control_roles: ["history"] },
+      { unit_id: unitIds[1], path: "계획/방향.md", control_roles: ["plan"] },
+      { unit_id: unitIds[2], path: "상태/현재.md", control_roles: ["current"] }
+    ],
+    control_candidate_paths: []
+  };
+  const semanticLedger = {
+    schema: "assistant.semantic-ledger/v1",
+    batches: [
+      {
+        unit_analyses: [
+          {
+            unit_id: unitIds[0],
+            classification: "historical_or_superseded",
+            semantic_roles: ["history"],
+            exact_elements: ["D-001"]
+          },
+          {
+            unit_id: unitIds[1],
+            classification: "canonical_knowledge_candidate",
+            semantic_roles: ["plan"],
+            exact_elements: ["threshold = 0.125"]
+          },
+          {
+            unit_id: unitIds[2],
+            classification: "canonical_knowledge_candidate",
+            semantic_roles: ["current"],
+            exact_elements: []
+          }
+        ]
+      }
+    ]
+  };
+  const output = {
+    schema: "assistant.bootstrap-output/v1",
+    project_summary: {
+      purpose: "Fixture",
+      scope: "Contract",
+      current_state: "Only the current state was retained",
+      current_authorization: "None",
+      authorization_state: "not_authorized",
+      authorized_work: [],
+      blocked_work: ["Execution"],
+      authorization_basis_paths: [],
+      next_safe_route: "Ask the user"
+    },
+    candidate_nodes: [
+      {
+        id: "WORK-CURRENT-001",
+        type: "work",
+        status: "paused",
+        authority: "candidate_unintegrated",
+        certainty: "direct",
+        relations: [],
+        title: "Current state",
+        body: "Only current state remains.",
+        semantic_sections: [],
+        evidence_paths: ["STATUS.md"],
+        legacy_aliases: []
+      }
+    ],
+    coverage_groups: [],
+    semantic_coverage: unitIds.map((unit_id) => ({
+      unit_id,
+      disposition: "consolidated",
+      target_ids: ["WORK-CURRENT-001"],
+      reason: "Compressed into current"
+    })),
+    legacy_surfaces: [],
+    lineage: {
+      origin_ids: ["WORK-CURRENT-001"],
+      ordered_stage_ids: [],
+      current_ids: ["WORK-CURRENT-001"],
+      complete: true,
+      missing: []
+    },
+    closed_book_audit: {
+      origin_to_current_explainable: true,
+      current_authorization_explainable: true,
+      hypotheses_explainable: true,
+      decisions_explainable: true,
+      live_legacy_dependencies: [],
+      missing_concerns: []
+    },
+    gaps: [],
+    conflicts: []
+  };
+  const findings = validateBootstrapOutput(
+    output,
+    { entries: [] },
+    { semanticManifest, semanticLedger }
+  );
+  assert.ok(findings.some((finding) => /history meaning lacks/.test(finding)));
+  assert.ok(findings.some((finding) => /exact element is absent/.test(finding)));
+  assert.ok(
+    findings.some((finding) =>
+      /control candidate 기록\/변경\.md lacks/.test(finding)
+    )
+  );
+});
+
 test("bootstrap selection is durable and cannot silently change effort", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-selection-"));
   const target = path.join(tempRoot, "project");
@@ -2076,13 +2400,15 @@ test("semantic bootstrap preserves a Codex thread and genuinely resumes after in
       await writeFile(path.join(bin, "codex.cmd"), "@exit /b 0\r\n", "utf8");
     }
     const fakeSource = [
-      "import { appendFileSync, existsSync, writeFileSync } from 'node:fs';",
+      "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
       "const args = process.argv.slice(2);",
       "appendFileSync(process.env.ASSISTANT_FAKE_LOG, JSON.stringify(args) + '\\n');",
       "const value = (name) => args[args.indexOf(name) + 1];",
       "const schema = value('--output-schema');",
       "const output = value('--output-last-message');",
-      "process.stdin.resume();",
+      "let stdin = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { stdin += chunk; });",
       "process.stdin.on('end', () => {",
       "  process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'thread-resume-001'}) + '\\n');",
       "  if (schema.includes('bootstrap-discovery') && !existsSync(process.env.ASSISTANT_FAKE_MARKER)) {",
@@ -2092,7 +2418,9 @@ test("semantic bootstrap preserves a Codex thread and genuinely resumes after in
       "  }",
       "  const payload = schema.includes('bootstrap-discovery')",
       "    ? {schema:'assistant.bootstrap-discovery/v1',boundaries:[],uncertainties:[]}",
-      "    : {schema:'assistant.bootstrap-output/v1',project_summary:{purpose:null,scope:null,current_state:'Observed existing project',current_authorization:null,authorization_state:'not_authorized',authorized_work:[],blocked_work:['Unspecified project work'],authorization_basis_paths:[],next_safe_route:'Ask the user for direction'},candidate_nodes:[],coverage_groups:[{selector_kind:'exact_path',selector:'README.md',disposition:'preserved',reason:'Root orientation document accounted for'}],gaps:[],conflicts:[]};",
+      "    : schema.includes('bootstrap-batch-output')",
+      "      ? (() => { const ids = [...stdin.matchAll(/SEM-[A-F0-9]{20}/g)].map((match) => match[0]); const number = stdin.match(/batch=(\\d+)/)?.[1] ?? '1'; return {schema:'assistant.bootstrap-batch-output/v1',batch_id:`BATCH-${number.padStart(4,'0')}`,unit_analyses:[...new Set(ids)].map((unit_id) => ({unit_id,classification:'nonsemantic',semantic_roles:[],meaning:'Synthetic resume fixture unit.',durable_facts:[],exact_elements:[],authority_claims:[],temporal_status:'not_applicable',relation_claims:[],conflict_candidates:[],uncertainties:[]}))}; })()",
+      "      : (() => { const manifest = JSON.parse(readFileSync('semantic-manifest.json','utf8')); return {schema:'assistant.bootstrap-output/v1',project_summary:{purpose:null,scope:null,current_state:'Observed existing project',current_authorization:null,authorization_state:'not_authorized',authorized_work:[],blocked_work:['Unspecified project work'],authorization_basis_paths:[],next_safe_route:'Ask the user for direction'},candidate_nodes:[],coverage_groups:[{selector_kind:'exact_path',selector:'README.md',disposition:'preserved',reason:'Root orientation document accounted for'}],semantic_coverage:manifest.units.map((unit) => ({unit_id:unit.unit_id,disposition:'observed_noncanonical',target_ids:[],reason:'Synthetic nonsemantic resume fixture'})),legacy_surfaces:[],lineage:{origin_ids:[],ordered_stage_ids:[],current_ids:[],complete:true,missing:[]},closed_book_audit:{origin_to_current_explainable:true,current_authorization_explainable:true,hypotheses_explainable:true,decisions_explainable:true,live_legacy_dependencies:[],missing_concerns:[]},gaps:[],conflicts:[]}; })();",
       "  writeFileSync(output, JSON.stringify(payload));",
       "  process.stdout.write(JSON.stringify({type:'turn.completed',usage:{input_tokens:10,output_tokens:5}}) + '\\n');",
       "});"
@@ -2137,10 +2465,11 @@ test("semantic bootstrap preserves a Codex thread and genuinely resumes after in
       .trim()
       .split(/\r?\n/u)
       .map((line) => JSON.parse(line));
-    assert.equal(invocations.length, 3);
+    assert.equal(invocations.length, 4);
     assert.equal(invocations[0].includes("--ephemeral"), false);
     assert.equal(invocations[1].includes("resume"), true);
     assert.equal(invocations[2].includes("resume"), true);
+    assert.equal(invocations[3].includes("resume"), true);
     assert.ok(
       invocations.every((args) =>
         args.includes("gpt-5.6-sol") &&
@@ -3556,6 +3885,60 @@ test("local version checker caches remote metadata and notifies only once", asyn
     });
     assert.equal(second, null);
     assert.equal(calls, 1);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("version checker performs one remote check per interactive session", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "assistant-version-session-"));
+  const target = path.join(tempRoot, "project");
+  try {
+    await initializeBlankProject(target);
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return {
+        ok: true,
+        json: async () => ({ tag_name: "v0.1.0" })
+      };
+    };
+    await checkAvailableUpdate(target, {
+      fetchImpl,
+      sessionId: "session-a",
+      now: Date.parse("2026-08-02T00:00:00Z")
+    });
+    await checkAvailableUpdate(target, {
+      fetchImpl,
+      sessionId: "session-a",
+      now: Date.parse("2026-08-02T00:01:00Z")
+    });
+    assert.equal(calls, 1);
+    await checkAvailableUpdate(target, {
+      fetchImpl,
+      sessionId: "session-b",
+      now: Date.parse("2026-08-02T00:02:00Z")
+    });
+    assert.equal(calls, 2);
+    const cache = JSON.parse(
+      await readFile(
+        path.join(
+          target,
+          ".assistant",
+          "internal",
+          "update-check.json"
+        ),
+        "utf8"
+      )
+    );
+    assert.equal(cache.seen_sessions.length, 2);
+    assert.ok(
+      cache.seen_sessions.every(
+        (entry) =>
+          entry.session_hash !== "session-a" &&
+          entry.session_hash !== "session-b"
+      )
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

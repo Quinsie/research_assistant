@@ -55,4 +55,12 @@ changing, running, testing, or shipping the project.
     only possible source of repository-wide boundaries. Do not read every file
     to discover rules, infer restrictions from names such as `archive`, or
     hardcode a restriction observed in one project as a universal rule.
+14. After discovery establishes the safe boundaries, existing-project
+    bootstrap must process every knowledge-bearing text candidate through the
+    semantic-unit ledger. Do not replace migration with a current-state
+    summary, silently discard old or superseded meaning, or activate while
+    unit coverage, origin-to-current lineage, material conflict handling, or
+    competing legacy control-surface migration remains incomplete. Normal
+    work after activation must use canonical routes instead of reopening a
+    live legacy master document as fallback authority.
 <!-- assistant-managed:end -->

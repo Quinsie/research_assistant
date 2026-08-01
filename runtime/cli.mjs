@@ -109,7 +109,8 @@ function humanResult(value) {
     return [
       "Initialization has not changed the project.",
       value.notice,
-      `Evidence packet: about ${value.packet_bytes ?? "unknown"} bytes; token cost cannot be predicted reliably.`,
+      `Bounded orientation packet: about ${value.packet_bytes ?? "unknown"} bytes.`,
+      `Full semantic batches: about ${value.semantic_batch_bytes ?? "unknown"} bytes across ${value.semantic_units ?? "unknown"} units; token cost cannot be predicted reliably.`,
       `Continue with: ${value.resume_command}`
     ].join("\n");
   }
@@ -221,6 +222,10 @@ function modelConfirmation(target, options, preflight = null) {
     effort,
     packet_bytes:
       preflight?.project?.projected_packet?.packet_bytes ?? null,
+    semantic_batch_bytes:
+      preflight?.project?.projected_semantic_evidence?.batch_bytes ?? null,
+    semantic_units:
+      preflight?.project?.projected_semantic_evidence?.semantic_units ?? null,
     notice:
       `For initialization quality, the assistant will use ${selection}. ` +
       "Existing-project bounded discovery and semantic analysis may consume " +

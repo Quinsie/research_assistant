@@ -58,6 +58,14 @@ reasoning effort are persisted; rerunning the installed `init` command resumes
 that session without silently changing effort. A new semantic attempt requires
 an explicit restart reason.
 
+Knowledge-bearing files are processed as stable semantic units in resumable
+batches rather than a head/tail sample. Initialization cannot activate from a
+current-state-only summary: every unit needs a loss-aware disposition and
+canonical target where applicable, origin-to-current lineage must be complete,
+material document/code conflicts must be represented, and competing legacy
+control surfaces must be resolved. Canonical operation may not depend on
+reopening a live legacy master document.
+
 Lifecycle commands are preview-first:
 
 ```text
@@ -74,9 +82,11 @@ assistant-owned local state and integration. Re-run uninstall or purge with
 `--confirm` only after reviewing the preview. Both preserve all project code,
 data, Git history, and everything under `docs/`.
 
-The installed non-model checker requests only the configured public GitHub
-release metadata at most once per cache interval. It reports a newer version
-once and never updates automatically. Disable it with the durable
+On the first prompt of each identifiable Codex session, the installed
+non-model checker requests only the configured public GitHub release metadata.
+It reports a newer version once and never updates automatically. Repeated
+prompts in the same session do not repeat the remote request; offline or failed
+checks remain silent and never block work. Disable it with the durable
 `update_check = disabled` project policy. Run `update` explicitly from the
 newly downloaded release; it stages and validates system-owned assets while
 preserving project-owned rules and canonical state.
@@ -158,6 +168,14 @@ model/profile, reasoning effort를 영속화하며, 설치된 `init` 명령을 �
 실행하면 effort를 임의로 바꾸지 않고 같은 session을 재개합니다. 새 semantic
 시도는 명시적인 restart 사유가 있을 때만 시작합니다.
 
+지식을 담을 수 있는 파일은 head/tail 표본이 아니라 안정적인 의미 단위와
+재개 가능한 batch로 처리합니다. 현재 상태만 축약한 결과로는 초기화를
+활성화할 수 없습니다. 모든 의미 단위에 loss-aware disposition과 필요한
+canonical target이 있어야 하고, 시작부터 현재까지의 계보가 완전해야 하며,
+중요한 문서·코드 모순과 경쟁하는 기존 제어 문서가 해결되어야 합니다.
+정상 canonical 작업은 기존 master 문서를 다시 여는 fallback에 의존할 수
+없습니다.
+
 수명주기 명령은 모두 preview가 기본입니다.
 
 ```text
@@ -174,8 +192,10 @@ snapshot을 만들며 기존 목적지를 덮어쓰지 않습니다. `purge`는 
 `--confirm`으로 uninstall 또는 purge를 다시 실행하십시오. 두 제거 명령은
 project code, data, Git history와 `docs/` 아래의 모든 내용을 보존합니다.
 
-설치된 non-model checker는 cache 주기당 최대 한 번 설정된 공개 GitHub release
-metadata만 요청합니다. 새 버전을 한 번만 알리며 자동 update는 하지 않습니다.
+설치된 non-model checker는 식별 가능한 Codex 세션의 첫 프롬프트에서만 설정된
+공개 GitHub release metadata를 요청합니다. 같은 세션의 후속 프롬프트는 원격
+요청을 반복하지 않습니다. 새 버전을 한 번만 알리고 자동 update는 하지 않으며,
+오프라인이거나 확인에 실패해도 작업을 막지 않고 조용히 넘어갑니다.
 durable project policy에서 `update_check = disabled`로 끌 수 있습니다. 새로
 내려받은 release에서 `update`를 명시적으로 실행하면 project-owned 규칙과
 canonical state를 보존한 채 system-owned 자산을 staging하고 검증합니다.

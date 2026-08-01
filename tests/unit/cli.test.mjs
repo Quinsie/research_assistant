@@ -190,18 +190,22 @@ test("installed init owns the complete persisted discovery and semantic continua
     assert.equal(deterministic.initialization_status, "bootstrap_incomplete");
 
     const fakeSource = [
-      "import { appendFileSync, writeFileSync } from 'node:fs';",
+      "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
       "const args = process.argv.slice(2);",
       "appendFileSync(process.env.ASSISTANT_FAKE_LOG, JSON.stringify(args) + '\\n');",
       "const value = (name) => args[args.indexOf(name) + 1];",
       "const schema = value('--output-schema');",
       "const output = value('--output-last-message');",
-      "process.stdin.resume();",
+      "let stdin = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { stdin += chunk; });",
       "process.stdin.on('end', () => {",
       "  process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'installed-thread-001'}) + '\\n');",
       "  const payload = schema.includes('bootstrap-discovery')",
       "    ? {schema:'assistant.bootstrap-discovery/v1',boundaries:[],uncertainties:[]}",
-      "    : {schema:'assistant.bootstrap-output/v1',project_summary:{purpose:null,scope:null,current_state:'Observed existing project',current_authorization:null,authorization_state:'not_authorized',authorized_work:[],blocked_work:['Unspecified work'],authorization_basis_paths:[],next_safe_route:'Ask the user for direction'},candidate_nodes:[],coverage_groups:[{selector_kind:'exact_path',selector:'README.md',disposition:'preserved',reason:'Root orientation document accounted for'}],gaps:[],conflicts:[]};",
+      "    : schema.includes('bootstrap-batch-output')",
+      "      ? (() => { const ids = [...stdin.matchAll(/SEM-[A-F0-9]{20}/g)].map((match) => match[0]); const number = stdin.match(/batch=(\\d+)/)?.[1] ?? '1'; return {schema:'assistant.bootstrap-batch-output/v1',batch_id:`BATCH-${number.padStart(4,'0')}`,unit_analyses:[...new Set(ids)].map((unit_id) => ({unit_id,classification:'nonsemantic',semantic_roles:[],meaning:'Synthetic installed-init fixture unit.',durable_facts:[],exact_elements:[],authority_claims:[],temporal_status:'not_applicable',relation_claims:[],conflict_candidates:[],uncertainties:[]}))}; })()",
+      "      : (() => { const manifest = JSON.parse(readFileSync('semantic-manifest.json','utf8')); return {schema:'assistant.bootstrap-output/v1',project_summary:{purpose:null,scope:null,current_state:'Observed existing project',current_authorization:null,authorization_state:'not_authorized',authorized_work:[],blocked_work:['Unspecified work'],authorization_basis_paths:[],next_safe_route:'Ask the user for direction'},candidate_nodes:[],coverage_groups:[{selector_kind:'exact_path',selector:'README.md',disposition:'preserved',reason:'Root orientation document accounted for'}],semantic_coverage:manifest.units.map((unit) => ({unit_id:unit.unit_id,disposition:'observed_noncanonical',target_ids:[],reason:'Synthetic nonsemantic installed-init fixture'})),legacy_surfaces:[],lineage:{origin_ids:[],ordered_stage_ids:[],current_ids:[],complete:true,missing:[]},closed_book_audit:{origin_to_current_explainable:true,current_authorization_explainable:true,hypotheses_explainable:true,decisions_explainable:true,live_legacy_dependencies:[],missing_concerns:[]},gaps:[],conflicts:[]}; })();",
       "  writeFileSync(output, JSON.stringify(payload));",
       "  process.stdout.write(JSON.stringify({type:'turn.completed',usage:{input_tokens:10,output_tokens:5}}) + '\\n');",
       "});"
@@ -263,12 +267,13 @@ test("installed init owns the complete persisted discovery and semantic continua
       args.some(
         (value) =>
           typeof value === "string" &&
-          /bootstrap-(?:discovery|output)\.schema\.json$/u.test(value)
+          /bootstrap-(?:discovery|batch-output|output)\.schema\.json$/u.test(value)
       )
     );
-    assert.equal(bootstrapInvocations.length, 2);
+    assert.equal(bootstrapInvocations.length, 3);
     assert.equal(bootstrapInvocations[0].includes("--ephemeral"), false);
     assert.equal(bootstrapInvocations[1].includes("resume"), true);
+    assert.equal(bootstrapInvocations[2].includes("resume"), true);
     assert.ok(
       bootstrapInvocations.every((args) =>
         args.includes("gpt-5.6-sol") &&

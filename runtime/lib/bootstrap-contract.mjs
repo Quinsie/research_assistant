@@ -20,6 +20,8 @@ export function validateBootstrapOutput(output, inventory, options = {}) {
     PROFILE_RELATION_REQUIREMENTS.research;
   const allowedTypes =
     PROFILE_ALLOWED_TYPES[profile] ?? PROFILE_ALLOWED_TYPES.research;
+  const semanticManifest = options.semanticManifest ?? null;
+  const semanticLedger = options.semanticLedger ?? null;
   if (output?.schema !== "assistant.bootstrap-output/v1") {
     findings.push("invalid bootstrap output schema");
   }
@@ -198,6 +200,260 @@ export function validateBootstrapOutput(output, inventory, options = {}) {
       `coverage misses ${missingCoverage.length} paths: ${missingCoverage.slice(0, 10).join(", ")}`
     );
   }
+
+  if (semanticManifest) {
+    const ledgerControlPaths = new Set();
+    const manifestUnits = new Map(
+      (semanticManifest.units ?? []).map((unit) => [unit.unit_id, unit])
+    );
+    const semanticCoverage = output?.semantic_coverage ?? [];
+    const coveredUnits = new Map();
+    for (const coverage of semanticCoverage) {
+      if (!manifestUnits.has(coverage.unit_id)) {
+        findings.push(
+          `semantic coverage targets unknown unit ${coverage.unit_id}`
+        );
+        continue;
+      }
+      if (coveredUnits.has(coverage.unit_id)) {
+        findings.push(
+          `semantic unit ${coverage.unit_id} has duplicate coverage`
+        );
+        continue;
+      }
+      coveredUnits.set(coverage.unit_id, coverage);
+      const requiresTarget = [
+        "preserved",
+        "consolidated",
+        "historical",
+        "superseded"
+      ].includes(coverage.disposition);
+      if (requiresTarget && (coverage.target_ids ?? []).length === 0) {
+        findings.push(
+          `semantic unit ${coverage.unit_id} requires a canonical target`
+        );
+      }
+      for (const target of coverage.target_ids ?? []) {
+        if (!ids.has(target)) {
+          findings.push(
+            `semantic unit ${coverage.unit_id} targets missing candidate ${target}`
+          );
+        }
+      }
+      const unit = manifestUnits.get(coverage.unit_id);
+      const roleTargetTypes = {
+        decision: new Set(["decision", "history"]),
+        history: new Set(["history", "decision", "plan", "experiment", "evidence"]),
+        plan: new Set(["plan", "history", "decision"]),
+        current: new Set(["work", "plan", "decision", "issue", "evidence"]),
+        authorization: new Set(["plan", "decision", "work", "requirement"]),
+        router: new Set(["plan", "foundation", "work"]),
+        instruction: new Set(["requirement", "environment", "plan", "decision"])
+      };
+      for (const role of unit.control_roles ?? []) {
+        const allowedTargets = roleTargetTypes[role];
+        if (
+          requiresTarget &&
+          allowedTargets &&
+          !(coverage.target_ids ?? []).some((target) =>
+            allowedTargets.has(types.get(target))
+          )
+        ) {
+          findings.push(
+            `semantic unit ${coverage.unit_id} with ${role} meaning lacks a compatible canonical target`
+          );
+        }
+      }
+    }
+    const missingUnits = [...manifestUnits.keys()].filter(
+      (unitId) => !coveredUnits.has(unitId)
+    );
+    if (missingUnits.length > 0) {
+      findings.push(
+        `semantic coverage misses ${missingUnits.length} units: ${missingUnits.slice(0, 10).join(", ")}`
+      );
+    }
+
+    if (semanticLedger) {
+      const analysisByUnit = new Map();
+      for (const batch of semanticLedger.batches ?? []) {
+        for (const analysis of batch.unit_analyses ?? []) {
+          if (analysisByUnit.has(analysis.unit_id)) {
+            findings.push(
+              `semantic ledger duplicates unit ${analysis.unit_id}`
+            );
+          }
+          analysisByUnit.set(analysis.unit_id, analysis);
+        }
+      }
+      for (const unitId of manifestUnits.keys()) {
+        if (!analysisByUnit.has(unitId)) {
+          findings.push(`semantic ledger misses unit ${unitId}`);
+        }
+      }
+      const candidateText = new Map(
+        (output?.candidate_nodes ?? []).map((node) => [
+          node.id,
+          [
+            node.title,
+            node.body,
+            ...(node.semantic_sections ?? []).flatMap((section) => [
+              section.heading,
+              section.content
+            ])
+          ].join("\n")
+        ])
+      );
+      for (const [unitId, analysis] of analysisByUnit) {
+        const manifestUnit = manifestUnits.get(unitId);
+        if (
+          manifestUnit?.path &&
+          (
+            analysis.classification === "repository_instruction" ||
+            (analysis.semantic_roles ?? []).some((role) =>
+              [
+                "current",
+                "plan",
+                "decision",
+                "authorization",
+                "history",
+                "instruction"
+              ].includes(role)
+            )
+          )
+        ) {
+          ledgerControlPaths.add(manifestUnit.path);
+        }
+        const coverage = coveredUnits.get(unitId);
+        if (!coverage || analysis.classification === "nonsemantic") continue;
+        const meaningful =
+          analysis.classification !== "repository_instruction" ||
+          (analysis.semantic_roles ?? []).some(
+            (role) => role !== "instruction"
+          );
+        if (
+          meaningful &&
+          ["omitted_with_reason", "observed_noncanonical"].includes(
+            coverage.disposition
+          )
+        ) {
+          findings.push(
+            `meaningful semantic unit ${unitId} was not retained canonically`
+          );
+          continue;
+        }
+        const targets = (coverage.target_ids ?? [])
+          .map((target) => candidateText.get(target) ?? "")
+          .join("\n");
+        for (const exact of analysis.exact_elements ?? []) {
+          if (exact.length > 0 && !targets.includes(exact)) {
+            findings.push(
+              `semantic unit ${unitId} exact element is absent from its canonical targets: ${exact.slice(0, 80)}`
+            );
+          }
+        }
+        if (
+          (analysis.conflict_candidates ?? []).length > 0 &&
+          (coverage.target_ids ?? []).length === 0
+        ) {
+          findings.push(
+            `semantic unit ${unitId} has conflict candidates without a canonical target`
+          );
+        }
+        if (
+          (analysis.conflict_candidates ?? []).length > 0 &&
+          (output.conflicts ?? []).length === 0 &&
+          !(coverage.target_ids ?? []).some((target) =>
+            ["issue", "decision", "history"].includes(types.get(target))
+          )
+        ) {
+          findings.push(
+            `semantic unit ${unitId} has unrepresented conflict candidates`
+          );
+        }
+      }
+    }
+
+    const legacySurfaces = output?.legacy_surfaces ?? [];
+    const surfaceByPath = new Map();
+    for (const surface of legacySurfaces) {
+      if (surfaceByPath.has(surface.path)) {
+        findings.push(`duplicate legacy surface ${surface.path}`);
+      }
+      surfaceByPath.set(surface.path, surface);
+      for (const target of surface.target_ids ?? []) {
+        if (!ids.has(target)) {
+          findings.push(
+            `legacy surface ${surface.path} targets missing candidate ${target}`
+          );
+        }
+      }
+    }
+    const requiredSurfacePaths = new Set([
+      ...(semanticManifest.control_candidate_paths ?? []),
+      ...ledgerControlPaths
+    ]);
+    for (const candidatePath of requiredSurfacePaths) {
+      if (!surfaceByPath.has(candidatePath)) {
+        findings.push(
+          `control candidate ${candidatePath} lacks legacy surface classification`
+        );
+      }
+    }
+
+    const lineage = output?.lineage;
+    const audit = output?.closed_book_audit;
+    if (!lineage || !audit) {
+      findings.push("semantic bootstrap lacks lineage or closed-book audit");
+    } else {
+      for (const id of [
+        ...(lineage.origin_ids ?? []),
+        ...(lineage.ordered_stage_ids ?? []),
+        ...(lineage.current_ids ?? [])
+      ]) {
+        if (!ids.has(id)) findings.push(`lineage targets missing candidate ${id}`);
+      }
+      const unresolvedSurface = legacySurfaces.some((surface) =>
+        ["canonical_candidate", "competing_control_surface"].includes(
+          surface.status
+        ) ||
+        (
+          surface.status === "repository_native" &&
+          (surface.roles ?? []).some((role) =>
+            ["current", "plan", "decision", "authorization", "router"].includes(role)
+          )
+        ) ||
+        (
+          surface.status === "resolved" &&
+          !["integrate_then_move", "integrate_then_remove"].includes(
+            surface.proposed_action
+          )
+        )
+      );
+      const auditIncomplete =
+        !lineage.complete ||
+        ((output.candidate_nodes ?? []).length > 0 &&
+          (
+            (lineage.origin_ids ?? []).length === 0 ||
+            (lineage.current_ids ?? []).length === 0
+          )) ||
+        !audit.origin_to_current_explainable ||
+        !audit.current_authorization_explainable ||
+        !audit.hypotheses_explainable ||
+        !audit.decisions_explainable ||
+        (audit.live_legacy_dependencies ?? []).length > 0 ||
+        (audit.missing_concerns ?? []).length > 0 ||
+        unresolvedSurface;
+      const initializationGap = (output.gaps ?? []).some(
+        (gap) => gap.blocking_level === "initialization"
+      );
+      if (auditIncomplete && !initializationGap) {
+        findings.push(
+          "incomplete lineage, legacy migration, or closed-book audit requires an initialization-level gap"
+        );
+      }
+    }
+  }
   return findings;
 }
 
@@ -272,6 +528,16 @@ export function validateBootstrapRepair(before, after, originalFindings) {
       JSON.stringify(after.coverage_groups)
   ) {
     findings.push("repair changed coverage without a coverage finding");
+  }
+  for (const field of [
+    "semantic_coverage",
+    "legacy_surfaces",
+    "lineage",
+    "closed_book_audit"
+  ]) {
+    if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
+      findings.push(`repair changed ${field}`);
+    }
   }
   return findings;
 }

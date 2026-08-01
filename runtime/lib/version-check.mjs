@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathExists } from "./files.mjs";
+import { sha256 } from "./meta.mjs";
 import { resolvePolicy } from "./policy.mjs";
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -63,15 +64,31 @@ export async function checkAvailableUpdate(target, options = {}) {
   }
   const now = options.now ?? Date.now();
   const interval = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const sessionHash = options.sessionId
+    ? sha256(String(options.sessionId))
+    : null;
+  const seenSessions = Array.isArray(cache?.seen_sessions)
+    ? cache.seen_sessions
+    : [];
+  const sessionSeen =
+    sessionHash &&
+    seenSessions.some((entry) => entry.session_hash === sessionHash);
   const fresh = cache?.checked_at &&
     now - Date.parse(cache.checked_at) < interval;
-  if (!fresh) {
+  const shouldFetch = sessionHash ? !sessionSeen : !fresh;
+  if (shouldFetch) {
     cache = {
       schema: "assistant.update-check/v1",
       checked_at: new Date(now).toISOString(),
       current_version: manifest.system_version,
       available_version: null,
-      notified_version: cache?.notified_version ?? null
+      notified_version: cache?.notified_version ?? null,
+      seen_sessions: [
+        ...seenSessions.filter((entry) => entry.session_hash !== sessionHash),
+        ...(sessionHash
+          ? [{ session_hash: sessionHash, checked_at: new Date(now).toISOString() }]
+          : [])
+      ].slice(-64)
     };
     try {
       const fetchImpl = options.fetchImpl ?? fetch;
