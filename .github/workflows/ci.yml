@@ -26,6 +26,13 @@ jobs:
         with:
           node-version: "20"
           package-manager-cache: false
+      - name: Provision Codex sandbox test group
+        shell: pwsh
+        run: |
+          if (-not (Get-LocalGroup -Name CodexSandboxUsers -ErrorAction SilentlyContinue)) {
+            New-LocalGroup -Name CodexSandboxUsers `
+              -Description "ACL integration test group"
+          }
       - name: Run regression suite
         run: npm test
       - name: Validate project template

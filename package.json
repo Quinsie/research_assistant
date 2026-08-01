@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+    "test": "node --test tests/unit/cli.test.mjs tests/unit/core.test.mjs tests/integration/longitudinal.test.mjs",
     "validate:self": "node runtime/cli.mjs validate --target project-template"
   }
 }
