@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+ASSISTANT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec node "$ASSISTANT_ROOT/runtime/cli.mjs" "$@"
