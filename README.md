@@ -48,6 +48,16 @@ The CLI prints concise human output by default; add `--json` for the complete
 machine payload. Long semantic initialization reports phases and elapsed-time
 heartbeats on stderr.
 
+Existing-project initialization first performs bounded orientation discovery
+from conventional project control surfaces, then applies only explicit,
+evidence-cited content boundaries to the semantic packet. If repository-native
+rules require migration, the CLI stops before model analysis and prints the
+exact interactive Codex handoff. Model analysis has no default wall-clock
+timeout. Its Codex session, workspace, packet identity, model/profile, and
+reasoning effort are persisted; rerunning the installed `init` command resumes
+that session without silently changing effort. A new semantic attempt requires
+an explicit restart reason.
+
 Lifecycle commands are preview-first:
 
 ```text
@@ -138,6 +148,15 @@ assistant.cmd init --target <프로젝트-경로> --yes
 CLI는 기본적으로 짧은 사용자용 결과를 출력하며, 전체 machine payload가
 필요할 때만 `--json`을 추가합니다. 오래 걸리는 semantic initialization은
 stderr에 현재 단계와 경과시간 heartbeat를 표시합니다.
+
+기존 프로젝트 초기화는 먼저 일반적인 프로젝트 제어 문서만 제한적으로
+확인하고, 명시적인 근거가 있는 접근 경계만 semantic packet에 적용합니다.
+저장소 고유 규칙의 migration이 필요하면 모델 분석 전에 멈추고, 사용자가
+어느 경로에서 Codex를 열어 어떤 요청을 보내야 하는지 안내합니다. 모델
+분석에는 기본 시간 제한이 없습니다. Codex session, 작업공간, packet 식별자,
+model/profile, reasoning effort를 영속화하며, 설치된 `init` 명령을 다시
+실행하면 effort를 임의로 바꾸지 않고 같은 session을 재개합니다. 새 semantic
+시도는 명시적인 restart 사유가 있을 때만 시작합니다.
 
 수명주기 명령은 모두 preview가 기본입니다.
 
