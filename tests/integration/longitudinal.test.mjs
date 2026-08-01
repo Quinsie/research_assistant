@@ -196,6 +196,23 @@ test("one project survives a complete multi-episode research lifecycle", async (
         }
       ],
       coverage_groups: [],
+      semantic_coverage: [],
+      legacy_surfaces: [],
+      lineage: {
+        origin_ids: ["FND-LONG-001"],
+        ordered_stage_ids: [],
+        current_ids: ["FND-LONG-001"],
+        complete: true,
+        missing: []
+      },
+      closed_book_audit: {
+        origin_to_current_explainable: true,
+        current_authorization_explainable: true,
+        hypotheses_explainable: true,
+        decisions_explainable: true,
+        live_legacy_dependencies: [],
+        missing_concerns: []
+      },
       gaps: [],
       conflicts: []
     };
