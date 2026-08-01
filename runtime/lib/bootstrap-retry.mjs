@@ -3,8 +3,10 @@ import {
   mkdir,
   readFile,
   rename,
+  rm,
   writeFile
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { pathExists } from "./files.mjs";
 import { parseNodeDocument, serializeNodeDocument } from "./meta.mjs";
@@ -36,11 +38,31 @@ export async function prepareBootstrapRetry(target, reason) {
   await mkdir(attemptRoot, { recursive: true });
   const moved = [];
   try {
+    const executionPath = path.join(bootstrapRoot, "execution.json");
+    if (await pathExists(executionPath)) {
+      const execution = JSON.parse(await readFile(executionPath, "utf8"));
+      const workspace = path.resolve(execution.workspace ?? "");
+      const temporaryRoot = path.resolve(os.tmpdir());
+      const relative = path.relative(temporaryRoot, workspace);
+      if (
+        relative &&
+        !relative.startsWith("..") &&
+        !path.isAbsolute(relative) &&
+        path.basename(workspace).startsWith("assistant-bootstrap-model-")
+      ) {
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }
     for (const name of [
       "model-result.json",
       "run.json",
       "resolution.json",
-      "staging"
+      "staging",
+      "selection.json",
+      "execution.json",
+      "discovery.json",
+      "discovery-packet.txt",
+      "evidence-packet.txt"
     ]) {
       const source = path.join(bootstrapRoot, name);
       if (!(await pathExists(source))) continue;

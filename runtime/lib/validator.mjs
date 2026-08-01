@@ -370,6 +370,31 @@ export async function validateProject(target) {
   const profileLabel = profile === "software" ? "SOFTWARE" : "RESEARCH";
   const allowedTypes =
     PROFILE_ALLOWED_TYPES[profile] ?? PROFILE_ALLOWED_TYPES.research;
+  if (
+    manifest &&
+    !["ready", "ready_with_gaps"].includes(manifest.initialization_status)
+  ) {
+    const prematurelyActive = loaded.nodes.filter(
+      (node) =>
+        node.path.startsWith(".assistant/knowledge/") &&
+        (
+          node.metadata.origin === "bootstrap" ||
+          (node.metadata.records ?? []).some(
+            (record) => record.origin === "bootstrap"
+          )
+        )
+    );
+    for (const node of prematurelyActive) {
+      findings.push(
+        finding(
+          "error",
+          "BOOTSTRAP_PREMATURE_ACTIVATION",
+          "bootstrap-derived knowledge is active while initialization is not ready",
+          node.path
+        )
+      );
+    }
+  }
   for (const node of loaded.nodes) {
     findings.push(...validateMetadata(node.metadata, node.path));
     for (const candidate of [

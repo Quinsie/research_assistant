@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assistant existing-project discovery output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "boundaries", "uncertainties"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "assistant.bootstrap-discovery/v1"
+    },
+    "boundaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "access", "evidence_path", "evidence", "certainty"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "access": {
+            "type": "string",
+            "enum": ["metadata_only", "exclude"]
+          },
+          "evidence_path": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 },
+          "certainty": {
+            "type": "string",
+            "enum": ["explicit", "ambiguous"]
+          }
+        }
+      }
+    },
+    "uncertainties": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

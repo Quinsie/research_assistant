@@ -106,11 +106,18 @@ them retained. Remove or rewrite legacy INDEX/CURRENT/PLAN/POLICY routes that
 compete with `.assistant`; do not delete rules merely because they are old.
 Preview material rule changes and obtain explicit confirmation, then run:
 
-`.assistant\system\assistant.cmd migration --complete-agents --confirm`
+`.assistant\system\assistant.cmd migration --complete-agents --confirm --json`
 
 The completion command validates that one managed block remains, competing
 control routes are gone, and accepted AGENTS/POLICY plus the original are
 archived. It does not decide rule meaning for the user.
+
+After every pending system migration is complete, continue the same bootstrap
+with `.assistant\system\assistant.cmd init --json` on Windows or
+`.assistant/system/assistant init --json` on POSIX. The installed runner uses
+the persisted profile or model/effort selection and a preserved Codex session
+when one exists. Never downgrade effort, add a timeout, or start a replacement
+semantic attempt without the user's explicit restart instruction and reason.
 
 After all answers are explicit, create one temporary
 `assistant.bootstrap-resolution/v1` JSON package. It must contain:
@@ -124,7 +131,7 @@ After all answers are explicit, create one temporary
 Preview the package to the user when any material conflict exists. After the
 user confirms the whole change, run:
 
-`.assistant\system\assistant.cmd bootstrap-resolve --input <exact-json-path> --confirm`
+`.assistant\system\assistant.cmd bootstrap-resolve --input <exact-json-path> --confirm --json`
 
 For gap-only resolution, omit `--confirm`. Never delete or downgrade a blocker
 without recording its answer in the package. The command validates declared
@@ -132,9 +139,9 @@ changes, activates canonical knowledge atomically, performs boundedness
 maintenance, validates closed-book state, and reports environment readiness.
 
 After successful activation, run
-`.assistant\system\assistant.cmd bootstrap-deferred --claim`. Tell the user
+`.assistant\system\assistant.cmd bootstrap-deferred --claim --json`. Tell the user
 that initialization is resolved and that you are returning to the original
 request, then perform that request under the newly active canonical state.
 After its durable state is safely recorded, run
-`.assistant\system\assistant.cmd bootstrap-deferred --complete`. A new session
+`.assistant\system\assistant.cmd bootstrap-deferred --complete --json`. A new session
 may reclaim an `in_progress` request; do not rely on chat history alone.
