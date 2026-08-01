@@ -1,29 +1,54 @@
 # Research Assistant System
 
-Status: usable Windows-local prototype; not yet public-release-ready.
+Status: usable cross-platform preview; not yet public-release-ready.
 
 This directory is the source root of the research-oriented Agent Documentation
 & Assistant System.
 
-It is not an initialized research-project instance. It contains the Windows
-`.cmd` initializer, project template, deterministic documentation kernel,
+It is not an initialized research-project instance. It contains Windows and
+POSIX initializers, the project template, deterministic documentation kernel,
 research workflow Skill, restricted gateway, validator, and test suite.
 
-Current prerequisites are Node.js 20+, Codex CLI, and the native Windows
-`elevated` sandbox setup. Initialize a project with:
+Prerequisites are Node.js 20+ and Codex CLI. The restricted-zone guarantee also
+requires a working native Codex sandbox backend:
+
+- Windows: the native `elevated` sandbox setup.
+- macOS: the Codex Seatbelt backend.
+- Linux: bubblewrap/user namespaces and any distribution-required policy. On
+  Ubuntu 24.04 with restricted unprivileged user namespaces, load the packaged
+  `bwrap-userns-restrict` AppArmor profile before activation.
+
+Initialize a project from the repository root:
 
 ```text
+# Windows
 assistant.cmd init --target <project-path>
+
+# Linux or macOS
+./assistant init --target <project-path>
 ```
 
-Review and trust the installed project config if Codex requests it, then rerun
-`assistant.cmd doctor --target <project-path>`. Normal use requires doctor to
-report `ready`. The installer protects `docs/user`, `docs/report`,
-`.assistant/vault`, and internal capability data with a permission profile,
-Windows ACLs, and an exact-grant gateway.
+Quote a path containing spaces in the current shell. Review and trust the
+installed project config if Codex requests it, then run the installed doctor:
 
-Use a recoverable copy for initial adoption. Release packaging, update delivery,
-support policy, and macOS/Linux validation remain outside this Windows build.
+```text
+# Windows
+<project-path>\.assistant\system\assistant.cmd doctor --target <project-path>
+
+# Linux or macOS
+<project-path>/.assistant/system/assistant doctor --target <project-path>
+```
+
+Normal use requires doctor to report `ready`. The system protects `docs/user`,
+`docs/report`, `.assistant/vault`, and internal capability data with a Codex
+permission profile and an exact-grant gateway; Windows also retains NTFS ACL
+defense in depth. If the sandbox probe cannot prove direct read and write
+denial, activation fails closed.
+
+Windows, Linux, and macOS run the same required regression suite. The current
+live-tested environments use Codex CLI 0.145 or 0.146. Use a recoverable copy
+for initial adoption. Release packaging, update delivery, and long-term support
+policy remain outside this preview.
 
 ## Contributing and license
 
@@ -34,31 +59,55 @@ Licensed under Apache-2.0; see [LICENSE](LICENSE).
 
 # 연구 보조 시스템
 
-상태: Windows 로컬에서 사용할 수 있는 프로토타입이며, 아직 공개 릴리스 준비는
-완료되지 않았습니다.
+상태: Windows, Linux, macOS에서 사용할 수 있는 프리뷰이며, 아직 공개 릴리스
+준비는 완료되지 않았습니다.
 
 이 디렉터리는 연구용 Agent Documentation & Assistant System의 소스 루트입니다.
 
-초기화된 연구 프로젝트 자체가 아닙니다. Windows `.cmd` 초기화 도구, 프로젝트
-템플릿, 결정론적 문서화 커널, 연구 워크플로 Skill, 제한 구역 게이트웨이,
-validator 및 테스트 모음을 포함합니다.
+초기화된 연구 프로젝트 자체가 아닙니다. Windows와 POSIX 초기화 도구,
+프로젝트 템플릿, 결정론적 문서화 커널, 연구 워크플로 Skill, 제한 구역
+게이트웨이, validator 및 테스트 모음을 포함합니다.
 
-현재 요구 사항은 Node.js 20 이상, Codex CLI, Windows 네이티브 `elevated`
-sandbox 설정입니다. 다음 명령으로 프로젝트를 초기화합니다.
+요구 사항은 Node.js 20 이상과 Codex CLI입니다. 제한 구역을 보장하려면
+운영체제별 Codex sandbox backend도 정상 동작해야 합니다.
+
+- Windows: 네이티브 `elevated` sandbox 설정
+- macOS: Codex Seatbelt backend
+- Linux: bubblewrap, user namespace 및 배포판이 요구하는 보안 정책. 제한된
+  unprivileged user namespace를 사용하는 Ubuntu 24.04에서는 활성화 전에
+  패키지의 `bwrap-userns-restrict` AppArmor profile을 load해야 합니다.
+
+저장소 루트에서 다음 명령으로 프로젝트를 초기화합니다.
 
 ```text
+# Windows
 assistant.cmd init --target <프로젝트-경로>
+
+# Linux 또는 macOS
+./assistant init --target <프로젝트-경로>
 ```
 
-Codex가 요청하면 설치된 프로젝트 설정을 검토하고 신뢰한 뒤
-`assistant.cmd doctor --target <프로젝트-경로>`를 다시 실행합니다. 정상 사용을
-시작하려면 doctor가 `ready`를 보고해야 합니다. 설치 프로그램은 permission
-profile, Windows ACL 및 정확한 경로만 허용하는 게이트웨이를 통해 `docs/user`,
-`docs/report`, `.assistant/vault`와 내부 capability 데이터를 보호합니다.
+경로에 공백이 있으면 현재 shell 규칙에 따라 따옴표로 감싸십시오. Codex가
+요청하면 설치된 프로젝트 설정을 검토하고 신뢰한 뒤 설치된 doctor를 실행합니다.
 
-처음 적용할 때는 복구 가능한 프로젝트 사본을 사용하십시오. 릴리스 패키징,
-업데이트 배포, 지원 정책 및 macOS/Linux 검증은 아직 이 Windows 빌드의 범위
-밖입니다.
+```text
+# Windows
+<프로젝트-경로>\.assistant\system\assistant.cmd doctor --target <프로젝트-경로>
+
+# Linux 또는 macOS
+<프로젝트-경로>/.assistant/system/assistant doctor --target <프로젝트-경로>
+```
+
+정상 사용을 시작하려면 doctor가 `ready`를 보고해야 합니다. 시스템은 Codex
+permission profile과 정확한 경로만 허용하는 gateway로 `docs/user`,
+`docs/report`, `.assistant/vault` 및 내부 capability 데이터를 보호합니다.
+Windows에서는 NTFS ACL도 심층 방어로 유지합니다. sandbox probe가 직접
+읽기·쓰기 차단을 입증하지 못하면 활성화되지 않습니다.
+
+Windows, Linux, macOS는 동일한 필수 회귀 테스트를 실행합니다. 현재 실제
+환경에서는 Codex CLI 0.145와 0.146을 검증했습니다. 처음 적용할 때는 복구
+가능한 프로젝트 사본을 사용하십시오. 릴리스 패키징, 업데이트 배포 및 장기
+지원 정책은 아직 이 프리뷰 범위 밖입니다.
 
 ## 기여 및 라이선스
 
